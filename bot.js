@@ -8,7 +8,7 @@ const PRIVATE_KEY = process.env.PRIVATE_KEY;
 const RPC_URL = process.env.RPC_URL || 'https://api.mainnet-beta.solana.com';
 
 if (!BOT_TOKEN || !PRIVATE_KEY) {
-  console.error("خەلەتی: پێداویستییەکان دیار نین!");
+  console.error("خەلەتی: زانیاریێن پێدڤی کێمن!");
   process.exit(1);
 }
 
@@ -28,42 +28,27 @@ try {
 }
 
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
-let dcaInterval = null; // پاراستنا فەرمانا کارکردنا بەردەوام
 
-bot.start((ctx) => {
-  ctx.reply(`سلاڤ! بۆتێ تە ئامادەیە.\n\nوالێت:\n\`${wallet.publicKey.toBase58()}\`\n\nفەرمانەکان:\n• /balance\n• /buy <CA> <Amount_SOL>\n• /sell <CA> <Amount_Tokens>\n• /dca_sell <CA> <Amount_Tokens> <Minutes>\n• /stop - ڕاگرتنا فرۆتنا بەردەوام`, { parse_mode: 'Markdown' });
-});
+// متغیرێن کونترۆلا خولان
+let autoLoopInterval = null;
+let autoLoopTimeout = null;
+let loopCounter = 0;
 
-bot.command('balance', async (ctx) => {
-  try {
-    const balance = await connection.getBalance(wallet.publicKey);
-    ctx.reply(`باڵانسێ SOL: ${(balance / LAMPORTS_PER_SOL).toFixed(4)} SOL`);
-  } catch (error) {
-    ctx.reply(`❌ کێشە ل خواندنا باڵانسی: ${error.message}`);
-  }
-});
-
-// فەنکشنا فرۆتنێ
-async function executeSell(mintStr, amount) {
-  const mintPubkey = new PublicKey(mintStr);
-  const mintInfo = await connection.getParsedAccountInfo(mintPubkey);
-  const decimals = mintInfo.value.data.parsed.info.decimals;
-  const rawAmount = Math.floor(amount * Math.pow(10, decimals));
-
+// ۱. فەنکشنا کڕینێ
+async function executeBuy(outputMint, solAmount) {
+  const lamports = Math.floor(solAmount * LAMPORTS_PER_SOL);
   const quoteRes = await axios.get('https://public.jupiterapi.com/quote', {
     params: {
-      inputMint: mintStr,
-      outputMint: SOL_MINT,
-      amount: rawAmount,
-      slippageBps: 150
+      inputMint: SOL_MINT,
+      outputMint: outputMint,
+      amount: lamports,
+      slippageBps: 100
     },
     timeout: 10000
   });
 
-  const quoteResponse = quoteRes.data;
-
   const swapRes = await axios.post('https://public.jupiterapi.com/swap', {
-    quoteResponse,
+    quoteResponse: quoteRes.data,
     userPublicKey: wallet.publicKey.toBase58(),
     wrapAndUnwrapSol: true,
     dynamicComputeUnitLimit: true,
@@ -73,13 +58,11 @@ async function executeSell(mintStr, amount) {
     timeout: 10000
   });
 
-  const { swapTransaction } = swapRes.data;
-  const swapTransactionBuf = Buffer.from(swapTransaction, 'base64');
+  const swapTransactionBuf = Buffer.from(swapRes.data.swapTransaction, 'base64');
   const transaction = VersionedTransaction.deserialize(swapTransactionBuf);
   transaction.sign([wallet]);
 
-  const rawTransaction = transaction.serialize();
-  const txid = await connection.sendRawTransaction(rawTransaction, {
+  const txid = await connection.sendRawTransaction(transaction.serialize(), {
     skipPreflight: true,
     maxRetries: 3
   });
@@ -87,63 +70,129 @@ async function executeSell(mintStr, amount) {
   return txid;
 }
 
-// فرۆتنا تەنێ یەکجار
-bot.command('sell', async (ctx) => {
-  const args = ctx.message.text.split(' ');
-  if (args.length < 3) return ctx.reply('⚠️ فۆرمات: `/sell <CA> <Tokens>`');
+// ۲. فەنکشنا فرۆتنێ
+async function executeSell(inputMint, tokenAmount) {
+  const mintPubkey = new PublicKey(inputMint);
+  const mintInfo = await connection.getParsedAccountInfo(mintPubkey);
+  const decimals = mintInfo.value.data.parsed.info.decimals;
+  const rawAmount = Math.floor(tokenAmount * Math.pow(10, decimals));
+
+  const quoteRes = await axios.get('https://public.jupiterapi.com/quote', {
+    params: {
+      inputMint: inputMint,
+      outputMint: SOL_MINT,
+      amount: rawAmount,
+      slippageBps: 150
+    },
+    timeout: 10000
+  });
+
+  const swapRes = await axios.post('https://public.jupiterapi.com/swap', {
+    quoteResponse: quoteRes.data,
+    userPublicKey: wallet.publicKey.toBase58(),
+    wrapAndUnwrapSol: true,
+    dynamicComputeUnitLimit: true,
+    prioritizationFeeLamports: 'auto'
+  }, {
+    headers: { 'Content-Type': 'application/json' },
+    timeout: 10000
+  });
+
+  const swapTransactionBuf = Buffer.from(swapRes.data.swapTransaction, 'base64');
+  const transaction = VersionedTransaction.deserialize(swapTransactionBuf);
+  transaction.sign([wallet]);
+
+  const txid = await connection.sendRawTransaction(transaction.serialize(), {
+    skipPreflight: true,
+    maxRetries: 3
+  });
+
+  return txid;
+}
+
+// فەرمانا Start
+bot.start((ctx) => {
+  ctx.reply(`سلاڤ! بۆتێ ئەکادیمی یێ بازرگانیێ ئامادەیە.\n\nوالێت:\n\`${wallet.publicKey.toBase58()}\``, { parse_mode: 'Markdown' });
+});
+
+// فەرمانا Balance
+bot.command('balance', async (ctx) => {
   try {
-    await ctx.reply('⏳ فرۆتن دهێتە ئەنجامدان...');
-    const txid = await executeSell(args[1], parseFloat(args[2]));
-    ctx.reply(`✅ فرۆتن هاتە ئەنجامدان!\nhttps://solscan.io/tx/${txid}`);
-  } catch (err) {
-    ctx.reply(`❌ کێشە: ${err.message}`);
+    const balance = await connection.getBalance(wallet.publicKey);
+    ctx.reply(`باڵانسێ جزدانێ: ${(balance / LAMPORTS_PER_SOL).toFixed(4)} SOL`);
+  } catch (error) {
+    ctx.reply(`❌ خەلەتی: ${error.message}`);
   }
 });
 
-// فرۆتنا بەردەوام (DCA Sell)
-bot.command('dca_sell', async (ctx) => {
+// ۳. فەرمانا کارپێکرنا ئۆتۆماتیک (Auto Trading ب دەمەکێ دیارکری)
+bot.command('autotrade', async (ctx) => {
   const args = ctx.message.text.split(' ');
-  if (args.length < 4) {
-    return ctx.reply('⚠️ فۆرمات:\n`/dca_sell <CA> <Amount_Each_Time> <Minutes>`\nنموونە بۆ فرۆتنا ٥ تۆکەن هەر ٢ خولەک جاک:\n`/dca_sell Ho3DNyGDTuKoFdA1bd6obE9xaL4RuStHUW1eLpodHS53 5 2`', { parse_mode: 'Markdown' });
+  if (args.length < 6) {
+    return ctx.reply('⚠️ فۆرمات نەدروستە!\nشێواز:\n`/autotrade <CA> <SOL_Buy> <Token_Sell> <Interval_Minutes> <Total_Minutes>`\n\nنموونە:\n`/autotrade Ho3DNyGDTuKoFdA1bd6obE9xaL4RuStHUW1eLpodHS53 0.005 1 2 10`\n(کڕینا 0.005 SOL و فرۆتنا 1 تۆکەن هەر 2 خولەک، بۆ ماوێ 10 خولەکان)', { parse_mode: 'Markdown' });
   }
 
   const ca = args[1];
-  const amount = parseFloat(args[2]);
-  const minutes = parseFloat(args[3]);
+  const solBuyAmount = parseFloat(args[2]);
+  const tokenSellAmount = parseFloat(args[3]);
+  const intervalMinutes = parseFloat(args[4]);
+  const totalDurationMinutes = parseFloat(args[5]);
 
-  if (dcaInterval) clearInterval(dcaInterval);
+  // پاقژکرنا پرۆسەیێن پێشتر
+  if (autoLoopInterval) clearInterval(autoLoopInterval);
+  if (autoLoopTimeout) clearTimeout(autoLoopTimeout);
+  loopCounter = 0;
 
-  ctx.reply(`🚀 سیستەمێ DCA دەستپێکرد!\nهەر ${minutes} خۆلەکان جارەکێ بڕێ ${amount} تۆکەن دێ هێنە فرۆتن.\nبۆ ڕاگرتنێ فەرمانا /stop بنێرە.`);
+  ctx.reply(`🚀 پرۆسەیا بازرگانی یا ئۆتۆماتیک دەستپێکر!\n\n• تۆکەن: \`${ca}\`\n• قەبارێ کڕینێ: ${solBuyAmount} SOL\n• قەبارێ فرۆتنێ: ${tokenSellAmount} Tokens\n• ماوەیێ دووبارەبوونێ: هەر ${intervalMinutes} خۆلەکان جارەک\n• ماوەیێ تێستێ: ${totalDurationMinutes} خۆلەک\n\nبۆ ڕاگرتنا دەمکی بنڤیسە: /stop`, { parse_mode: 'Markdown' });
 
-  // جێبەجێکرنا ئێکسەر بۆ جارا ئێکێ
-  try {
-    const txid = await executeSell(ca, amount);
-    ctx.reply(`🔄 [DCA] ترانزاکشنا ئێكێ:\nhttps://solscan.io/tx/${txid}`);
-  } catch (err) {
-    ctx.reply(`⚠️ [DCA] خەلەتی ل خولی یەکێ: ${err.message}`);
-  }
-
-  // خولێن بەردەوام
-  dcaInterval = setInterval(async () => {
+  // فەنکشنا جێبەجێکرنا ئێک خول
+  const runCycle = async () => {
+    loopCounter++;
+    const currentCount = loopCounter;
     try {
-      const txid = await executeSell(ca, amount);
-      ctx.reply(`🔄 [DCA] فرۆتن هاتە ئەنجامدان:\nhttps://solscan.io/tx/${txid}`);
+      // ۱. کڕین
+      const buyTx = await executeBuy(ca, solBuyAmount);
+      ctx.reply(`🔄 [خولێ #${currentCount}] کڕین سەرکەفت:\nhttps://solscan.io/tx/${buyTx}`);
+
+      // ڕاوەستان بۆ ۱۰ چرکەیان تا ترانزاکشنا کڕینێ پەسەند دبیت
+      await new Promise(r => setTimeout(r, 10000));
+
+      // ۲. فرۆتن
+      const sellTx = await executeSell(ca, tokenSellAmount);
+      ctx.reply(`✅ [خولێ #${currentCount}] فرۆتن سەرکەفت:\nhttps://solscan.io/tx/${sellTx}`);
     } catch (err) {
-      ctx.reply(`⚠️ [DCA] خەلەتی لە ئەنجامدان: ${err.message}`);
+      ctx.reply(`⚠️ [خولێ #${currentCount}] خەلەتی: ${err.message}`);
     }
-  }, minutes * 60 * 1000);
+  };
+
+  // دەستپێکرنا یەکەم خول ڕاستەوخۆ
+  await runCycle();
+
+  // خشتەکرنا دووبارەبوونێ
+  autoLoopInterval = setInterval(runCycle, intervalMinutes * 60 * 1000);
+
+  // ڕاگرتنا ئۆتۆماتیک پشتی تەمامبوونا ماوەیێ دیارکری
+  autoLoopTimeout = setTimeout(() => {
+    if (autoLoopInterval) {
+      clearInterval(autoLoopInterval);
+      autoLoopInterval = null;
+      ctx.reply(`🏁 تێست ب سەرکەفتی ب دووماهی هات!\nماوەیێ دیارکری (${totalDurationMinutes} خولەک) تمام بوو. سەرجەم خولێن ئەنجامدراو: ${loopCounter}`);
+    }
+  }, totalDurationMinutes * 60 * 1000);
 });
 
-// ڕاگرتنا پرۆسەیا بەردەوام
+// ٤. فەرمانا ڕاگرتنا پێشوەخت
 bot.command('stop', (ctx) => {
-  if (dcaInterval) {
-    clearInterval(dcaInterval);
-    dcaInterval = null;
-    ctx.reply('🛑 فرۆتنا بەردەوام هاتە ڕاگرتن.');
+  if (autoLoopInterval || autoLoopTimeout) {
+    clearInterval(autoLoopInterval);
+    clearTimeout(autoLoopTimeout);
+    autoLoopInterval = null;
+    autoLoopTimeout = null;
+    ctx.reply(`🛑 پڕۆسە هاتە ڕاگرتن. کۆی گشتی خولێن کارپێکراو: ${loopCounter}`);
   } else {
-    ctx.reply('هیچ پڕۆسەیەکی چالاک نینە بۆ ڕاگرتن.');
+    ctx.reply('هیچ پڕۆسەیەکی چالاک نینە.');
   }
 });
 
 bot.launch();
-console.log('Bot is running with DCA...');
+console.log('Bot is running...');
