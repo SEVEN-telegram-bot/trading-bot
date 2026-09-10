@@ -42,7 +42,7 @@ bot.command('balance', async (ctx) => {
   }
 });
 
-// فەرمانا کڕینێ ب نویترین ئیندرەسێ ئۆپێن یێ Jupiter
+// فەرمانا کڕینێ (Buy)
 bot.command('buy', async (ctx) => {
   const args = ctx.message.text.split(' ');
   if (args.length < 3) {
@@ -61,7 +61,6 @@ bot.command('buy', async (ctx) => {
   try {
     const lamports = Math.floor(solAmount * LAMPORTS_PER_SOL);
 
-    // بکارئینانا ئیندرەسێ جێگر یێ گشتی
     const quoteRes = await axios.get('https://public.jupiterapi.com/quote', {
       params: {
         inputMint: SOL_MINT,
@@ -100,7 +99,71 @@ bot.command('buy', async (ctx) => {
   } catch (error) {
     console.error(error);
     const errData = error.response ? JSON.stringify(error.response.data) : error.message;
-    ctx.reply(`❌ خەلەتی:\n${errData}`);
+    ctx.reply(`❌ خەلەتی ل کڕینێ:\n${errData}`);
+  }
+});
+
+// فەرمانا فرۆتنێ (Sell)
+bot.command('sell', async (ctx) => {
+  const args = ctx.message.text.split(' ');
+  if (args.length < 3) {
+    return ctx.reply('⚠️ فۆرمات: `/sell <CA> <Amount_Tokens>`', { parse_mode: 'Markdown' });
+  }
+
+  const inputMint = args[1];
+  const tokenAmount = parseFloat(args[2]);
+
+  if (isNaN(tokenAmount) || tokenAmount <= 0) {
+    return ctx.reply('⚠️ بڕێ تۆکەنان خەلەتە!');
+  }
+
+  await ctx.reply('⏳ مامەلەیا فرۆتنێ دهێتە ئەنجامدان، چاڤەڕێبە...');
+
+  try {
+    const mintPubkey = new PublicKey(inputMint);
+    const mintInfo = await connection.getParsedAccountInfo(mintPubkey);
+    const decimals = mintInfo.value.data.parsed.info.decimals;
+    const rawAmount = Math.floor(tokenAmount * Math.pow(10, decimals));
+
+    const quoteRes = await axios.get('https://public.jupiterapi.com/quote', {
+      params: {
+        inputMint: inputMint,
+        outputMint: SOL_MINT,
+        amount: rawAmount,
+        slippageBps: 150
+      },
+      timeout: 10000
+    });
+
+    const quoteResponse = quoteRes.data;
+
+    const swapRes = await axios.post('https://public.jupiterapi.com/swap', {
+      quoteResponse,
+      userPublicKey: wallet.publicKey.toBase58(),
+      wrapAndUnwrapSol: true,
+      dynamicComputeUnitLimit: true,
+      prioritizationFeeLamports: 'auto'
+    }, {
+      headers: { 'Content-Type': 'application/json' },
+      timeout: 10000
+    });
+
+    const { swapTransaction } = swapRes.data;
+    const swapTransactionBuf = Buffer.from(swapTransaction, 'base64');
+    const transaction = VersionedTransaction.deserialize(swapTransactionBuf);
+    transaction.sign([wallet]);
+
+    const rawTransaction = transaction.serialize();
+    const txid = await connection.sendRawTransaction(rawTransaction, {
+      skipPreflight: true,
+      maxRetries: 3
+    });
+
+    ctx.reply(`✅ فرۆتن هاتە ئەنجامدان!\n\n🔗 Solscan:\nhttps://solscan.io/tx/${txid}`);
+  } catch (error) {
+    console.error(error);
+    const errData = error.response ? JSON.stringify(error.response.data) : error.message;
+    ctx.reply(`❌ خەلەتی ل فرۆتنێ:\n${errData}`);
   }
 });
 
