@@ -1,5 +1,5 @@
 const { Telegraf } = require('telegraf');
-const { Connection, Keypair, VersionedTransaction, LAMPORTS_PER_SOL } = require('@solana/web3.js');
+const { Connection, Keypair, VersionedTransaction, LAMPORTS_PER_SOL, PublicKey } = require('@solana/web3.js');
 const bs58 = require('bs58');
 const axios = require('axios');
 
@@ -8,7 +8,7 @@ const PRIVATE_KEYS_RAW = process.env.PRIVATE_KEY;
 const RPC_URL = process.env.RPC_URL || 'https://api.mainnet-beta.solana.com';
 
 if (!BOT_TOKEN || !PRIVATE_KEYS_RAW) {
-  console.error("خەلەتی: فەرمانێن ژینگەهی کێمن!");
+  console.error("خەلەتی: زانیاریێن پێدڤی نینن!");
   process.exit(1);
 }
 
@@ -26,13 +26,13 @@ for (const key of keysArray) {
     try {
       wallets.push(Keypair.fromSecretKey(Uint8Array.from(JSON.parse(key))));
     } catch (err) {
-      console.error("خەلەتی لە کلیلێ دا:", err.message);
+      console.error("خەلەتی لە کلیلەک دا هەیە:", err.message);
     }
   }
 }
 
 if (wallets.length === 0) {
-  console.error("هیچ والێتەک نەهاتە ناسین!");
+  console.error("هیچ والێتەک نەهاتە بارکرن!");
   process.exit(1);
 }
 
@@ -42,7 +42,24 @@ let isRunning24h = false;
 let loopTimeoutId = null;
 let tradeCount = 0;
 
-// ۱. کڕینا ئەکادیمی
+// پشکنینا باڵانسێ تۆکەنێ د والێتێ دا
+async function getTokenBalance(walletPubkey, mintPubkeyStr) {
+  try {
+    const response = await connection.getParsedTokenAccountsByOwner(walletPubkey, {
+      mint: new PublicKey(mintPubkeyStr)
+    });
+    if (response.value.length === 0) return { rawAmount: '0', uiAmount: 0 };
+    const tokenAccount = response.value[0].account.data.parsed.info.tokenAmount;
+    return {
+      rawAmount: tokenAccount.amount,
+      uiAmount: tokenAccount.uiAmount || 0
+    };
+  } catch (err) {
+    return { rawAmount: '0', uiAmount: 0 };
+  }
+}
+
+// ۱. فەنکشنا کڕینێ
 async function executeBuy(selectedWallet, outputMint, solAmount) {
   const lamports = Math.floor(solAmount * LAMPORTS_PER_SOL);
   const quoteRes = await axios.get('https://public.jupiterapi.com/quote', {
@@ -50,41 +67,6 @@ async function executeBuy(selectedWallet, outputMint, solAmount) {
       inputMint: SOL_MINT,
       outputMint: outputMint,
       amount: lamports,
-      slippageBps: 150
-    },
-    timeout: 15000
-  });
-
-  const swapRes = await axios.post('https://public.jupiterapi.com/swap', {
-    quoteResponse: quoteRes.data,
-    userPublicKey: selectedWallet.publicKey.toBase58(),
-    wrapAndUnwrapSol: true,
-    dynamicComputeUnitLimit: true,
-    prioritizationFeeLamports: 'auto'
-  }, {
-    headers: { 'Content-Type': 'application/json' },
-    timeout: 15000
-  });
-
-  const swapTransactionBuf = Buffer.from(swapRes.data.swapTransaction, 'base64');
-  const transaction = VersionedTransaction.deserialize(swapTransactionBuf);
-  transaction.sign([selectedWallet]);
-
-  const txid = await connection.sendRawTransaction(transaction.serialize(), {
-    skipPreflight: true,
-    maxRetries: 3
-  });
-
-  return { txid, outAmount: quoteRes.data.outAmount };
-}
-
-// ۲. فرۆتنا ژیر و نا-هاوسەنگ
-async function executeSell(selectedWallet, inputMint, rawTokenAmount) {
-  const quoteRes = await axios.get('https://public.jupiterapi.com/quote', {
-    params: {
-      inputMint: inputMint,
-      outputMint: SOL_MINT,
-      amount: rawTokenAmount,
       slippageBps: 200
     },
     timeout: 15000
@@ -113,30 +95,65 @@ async function executeSell(selectedWallet, inputMint, rawTokenAmount) {
   return txid;
 }
 
-// فەرمانا Start
+// ۲. فەنکشنا فرۆتنێ
+async function executeSell(selectedWallet, inputMint, rawTokenAmount) {
+  const quoteRes = await axios.get('https://public.jupiterapi.com/quote', {
+    params: {
+      inputMint: inputMint,
+      outputMint: SOL_MINT,
+      amount: rawTokenAmount,
+      slippageBps: 250
+    },
+    timeout: 15000
+  });
+
+  const swapRes = await axios.post('https://public.jupiterapi.com/swap', {
+    quoteResponse: quoteRes.data,
+    userPublicKey: selectedWallet.publicKey.toBase58(),
+    wrapAndUnwrapSol: true,
+    dynamicComputeUnitLimit: true,
+    prioritizationFeeLamports: 'auto'
+  }, {
+    headers: { 'Content-Type': 'application/json' },
+    timeout: 15000
+  });
+
+  const swapTransactionBuf = Buffer.from(swapRes.data.swapTransaction, 'base64');
+  const transaction = VersionedTransaction.deserialize(swapTransactionBuf);
+  transaction.sign([selectedWallet]);
+
+  const txid = await connection.sendRawTransaction(transaction.serialize(), {
+    skipPreflight: true,
+    maxRetries: 3
+  });
+
+  return txid;
+}
+
+// Start Command
 bot.start((ctx) => {
-  let msg = `🛡️ بۆتێ زیرەکێ بازرگانیێ یێ شاردەزا (Stealth Market Maker) ئامادەیە.\n\nژمارەیا والێتان: *${wallets.length}*\n\nلیستا ئەدرەسان:\n`;
+  let msg = `👤 بۆتێ ڕاستەقینە و ئەکادیمی یێ ترەیدێ ئامادەیە.\n\nژمارەیا والێتێن چالاک: *${wallets.length}*\n\nلیست:\n`;
   wallets.forEach((w, i) => {
     msg += `${i + 1}. \`${w.publicKey.toBase58()}\`\n`;
   });
   ctx.reply(msg, { parse_mode: 'Markdown' });
 });
 
-// فەرمانا باڵانس
+// Balance Command
 bot.command('balance', async (ctx) => {
   try {
-    let msg = `📊 **باڵانسێ جزدانێن چالاک:**\n\n`;
+    let msg = `📊 **باڵانسێ جزدانان:**\n\n`;
     for (let i = 0; i < wallets.length; i++) {
       const b = await connection.getBalance(wallets[i].publicKey);
       msg += `والێت ${i + 1} (\`${wallets[i].publicKey.toBase58().slice(0, 4)}...${wallets[i].publicKey.toBase58().slice(-4)}\`): ${(b / LAMPORTS_PER_SOL).toFixed(4)} SOL\n`;
     }
     ctx.reply(msg, { parse_mode: 'Markdown' });
   } catch (error) {
-    ctx.reply(`❌ کێشە ل پشکنینێ: ${error.message}`);
+    ctx.reply(`❌ خەلەتی: ${error.message}`);
   }
 });
 
-// ۳. دەستپێکرنا مۆدێ شاردەزا و نەدیارکری
+// ۳. کارپێکرنا سیستەمێ ئەکادیمی یێ سەربەخۆ و سروشتی
 bot.command('start_smart', async (ctx) => {
   const args = ctx.message.text.split(' ');
   const ca = args[1] || 'Ho3DNyGDTuKoFdA1bd6obE9xaL4RuStHUW1eLpodHS53';
@@ -148,56 +165,66 @@ bot.command('start_smart', async (ctx) => {
   isRunning24h = true;
   tradeCount = 0;
 
-  ctx.reply(`🥷 **مۆدێ ئەکادیمی یێ شاردەزا دەستپێکر!**\n\n• تۆکەن: \`${ca}\`\n• شێواز: نەدیارکری (Randomized Amounts & Delays)\n• تاکتیک: فرۆتنا نە-تەواو دا والێت ببنە هۆلدەرێن سروشتی.\n• ڕاگرتن: ب فەرمانا /stop`, { parse_mode: 'Markdown' });
+  ctx.reply(`🌿 **مۆدێ والێتێن ڕاستەقینە (Human Trader Simulation) دەستپێکر!**\n\n• تۆکەن: \`${ca}\`\n• شێواز: کڕین و فرۆتن لێک جودانە و د یەک دەمدا ناهێنە کرن.\n• ڕاگرتن: ب فەرمانا /stop\n• مەودایێ دەمی: ناڤبەرا هەر تەڤگەرەکێ د ناڤبەرا ۸ بۆ ۲۲ خولەکان دایە.`, { parse_mode: 'Markdown' });
 
-  const executeSmartCycle = async () => {
+  const executeOrganicAction = async () => {
     if (!isRunning24h) return;
 
     tradeCount++;
     const currentLoop = tradeCount;
 
-    // والێتەک ب شێوەیێ ڕەندەم
-    const randomIndex = Math.floor(Math.random() * wallets.length);
-    const activeWallet = wallets[randomIndex];
+    // هەلبژارتنا والێتەکێ ب شێوەیێ ڕەندەم
+    const randomWalletIdx = Math.floor(Math.random() * wallets.length);
+    const activeWallet = wallets[randomWalletIdx];
     const shortAddr = `${activeWallet.publicKey.toBase58().slice(0, 4)}...${activeWallet.publicKey.toBase58().slice(-4)}`;
 
     try {
-      // قەبارێ ڕەندەم د ناڤبەرا 0.034 هەتا 0.043 SOL (~$5-$6)
-      const randomSol = (Math.random() * (0.043 - 0.034) + 0.034).toFixed(5);
+      const solBalance = await connection.getBalance(activeWallet.publicKey);
+      const tokenBal = await getTokenBalance(activeWallet.publicKey, ca);
 
-      // کڕین
-      const buyResult = await executeBuy(activeWallet, ca, parseFloat(randomSol));
-      ctx.reply(`📈 [خولێ #${currentLoop} | والێت ${randomIndex + 1} (${shortAddr})]\nکڕین ب سەرکەفت (~${randomSol} SOL):\nhttps://solscan.io/tx/${buyResult.txid}`);
+      // بڕیاردان: ئایا کڕین بهێتە کرن یان فرۆتن؟
+      // ئەگەر تۆکەن تێدا هەبیت: ٦۰٪ چانس هەیە بکڕیت، ٤۰٪ بفرۆشیت. ئەگەر تۆکەن نەبیت، نەچاری کڕینێیە.
+      let doBuy = true;
+      if (tokenBal.uiAmount > 0.5) {
+        doBuy = Math.random() < 0.60;
+      }
 
-      // ڕاگرتنا سروشتی (د ناڤبەرا ۳۵ چرکە تا ۱۲۰ چرکە)
-      const waitBetween = Math.floor(Math.random() * (120000 - 35000)) + 35000;
-      await new Promise(r => setTimeout(r, waitBetween));
+      // ئەگەر باڵانسێ SOL کێم بوو ژ 0.04 SOL، فرۆتنێ هەلدبژێریت
+      if (solBalance < 0.04 * LAMPORTS_PER_SOL && tokenBal.uiAmount > 0.5) {
+        doBuy = false;
+      }
 
-      if (!isRunning24h) return;
+      if (doBuy) {
+        // ۱. پڕۆسەیا کڕینێ بتنێ (~$5-$6 / 0.035 - 0.042 SOL)
+        const randomSol = (Math.random() * (0.042 - 0.035) + 0.035).toFixed(5);
+        const txid = await executeBuy(activeWallet, ca, parseFloat(randomSol));
+        ctx.reply(`🟢 [مامەلە #${currentLoop} | والێت ${randomWalletIdx + 1} (${shortAddr})]\nکڕینا سروشتی ئەنجامدرا (${randomSol} SOL):\nhttps://solscan.io/tx/${txid}`);
+      } else {
+        // ۲. پڕۆسەیا فرۆتنێ بتنێ (د ناڤبەرا ۳۰٪ هەتا ۷۰٪ ژ تۆکەنێن وێ والێتێ دفرۆشیت، نەکو هەمیا!)
+        const sellPercent = Math.random() * (0.70 - 0.30) + 0.30;
+        const rawTokensToSell = Math.floor(BigInt(tokenBal.rawAmount) * BigInt(Math.floor(sellPercent * 100)) / 100n).toString();
 
-      // تەکتیکا فرۆتنا نا-هاوسەنگ: ۸۲٪ بۆ ۹۶٪ دفرۆشیت دا کێمەک بمینیت و ببیتە هۆلدەر
-      const sellRatio = Math.random() * (0.96 - 0.82) + 0.82;
-      const tokensToSell = Math.floor(parseInt(buyResult.outAmount) * sellRatio).toString();
-
-      // فرۆتن
-      const sellTx = await executeSell(activeWallet, ca, tokensToSell);
-      ctx.reply(`📉 [خولێ #${currentLoop} | والێت ${randomIndex + 1}]\nفرۆتنا بەشەکی (${(sellRatio * 100).toFixed(1)}%) ب سەرکەفت:\nhttps://solscan.io/tx/${sellTx}`);
+        if (BigInt(rawTokensToSell) > 0n) {
+          const txid = await executeSell(activeWallet, ca, rawTokensToSell);
+          ctx.reply(`🔴 [مامەلە #${currentLoop} | والێت ${randomWalletIdx + 1} (${shortAddr})]\nفرۆتنا سەربەخۆ (${(sellPercent * 100).toFixed(0)}% تۆکەن):\nhttps://solscan.io/tx/${txid}`);
+        }
+      }
 
     } catch (err) {
       console.error(err);
-      ctx.reply(`⚠️ تێبینی ل خولێ #${currentLoop}: ${err.message || 'مامەلە سەرنەکەفت، بەرەڤ خولا بهێت'}`);
+      ctx.reply(`⚠️ تێبینی ل سەر مامەلەیا #${currentLoop}: ${err.message || 'خەلەتیەک ڕوویدا'}`);
     }
 
     if (isRunning24h) {
-      // دەمێ درێژ و ڕەندەم: ٤ بۆ ۱۱ خولەک (۲٤۰,۰۰۰ بۆ ۶۶۰,۰۰۰ چرکە)
-      const nextDelay = Math.floor(Math.random() * (660000 - 240000)) + 240000;
+      // دەمەکێ درێژ و ڕاستەقینە د ناڤبەرا ۸ بۆ ۲۲ خولەکاندا (٤٨٠,٠٠٠ بۆ ١,٣٢٠,٠٠٠ چرکە)
+      const nextDelay = Math.floor(Math.random() * (1320000 - 480000)) + 480000;
       const minutesWait = (nextDelay / 60000).toFixed(1);
-      ctx.reply(`⏳ خولا بهێت (#${currentLoop + 1}) دێ هێتە ئەنجامدان پشتی: ${minutesWait} خولەکان.`);
-      loopTimeoutId = setTimeout(executeSmartCycle, nextDelay);
+      ctx.reply(`⏳ تەڤگەرا بهێت (#${currentLoop + 1}) دێ هێتە ئەنجامدان پشتی: ${minutesWait} خولەکان.`);
+      loopTimeoutId = setTimeout(executeOrganicAction, nextDelay);
     }
   };
 
-  executeSmartCycle();
+  executeOrganicAction();
 });
 
 // ڕاگرتن
@@ -206,11 +233,11 @@ bot.command('stop', (ctx) => {
     isRunning24h = false;
     if (loopTimeoutId) clearTimeout(loopTimeoutId);
     loopTimeoutId = null;
-    ctx.reply(`🛑 سیستەم هاتە ڕاگرتن.\nسەرجەم مامەلەیێن دروستکراو: ${tradeCount}`);
+    ctx.reply(`🛑 سیستەم هاتە ڕاگرتن.\nسەرجەم ترانزاکشن: ${tradeCount}`);
   } else {
     ctx.reply('هیچ پڕۆسەیەک کار ناکەت.');
   }
 });
 
 bot.launch();
-console.log('Academic Stealth Bot is running...');
+console.log('Organic Human-Simulated Bot is running...');
