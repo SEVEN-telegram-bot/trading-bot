@@ -29,10 +29,9 @@ try {
 
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
 
-// متغیرێن کونترۆلا خولان
-let autoLoopInterval = null;
-let autoLoopTimeout = null;
-let loopCounter = 0;
+let isRunning24h = false;
+let loopTimeoutId = null;
+let tradeCount = 0;
 
 // ۱. فەنکشنا کڕینێ
 async function executeBuy(outputMint, solAmount) {
@@ -42,9 +41,9 @@ async function executeBuy(outputMint, solAmount) {
       inputMint: SOL_MINT,
       outputMint: outputMint,
       amount: lamports,
-      slippageBps: 100
+      slippageBps: 150
     },
-    timeout: 10000
+    timeout: 15000
   });
 
   const swapRes = await axios.post('https://public.jupiterapi.com/swap', {
@@ -55,7 +54,7 @@ async function executeBuy(outputMint, solAmount) {
     prioritizationFeeLamports: 'auto'
   }, {
     headers: { 'Content-Type': 'application/json' },
-    timeout: 10000
+    timeout: 15000
   });
 
   const swapTransactionBuf = Buffer.from(swapRes.data.swapTransaction, 'base64');
@@ -67,24 +66,19 @@ async function executeBuy(outputMint, solAmount) {
     maxRetries: 3
   });
 
-  return txid;
+  return { txid, outAmount: quoteRes.data.outAmount };
 }
 
 // ۲. فەنکشنا فرۆتنێ
-async function executeSell(inputMint, tokenAmount) {
-  const mintPubkey = new PublicKey(inputMint);
-  const mintInfo = await connection.getParsedAccountInfo(mintPubkey);
-  const decimals = mintInfo.value.data.parsed.info.decimals;
-  const rawAmount = Math.floor(tokenAmount * Math.pow(10, decimals));
-
+async function executeSell(inputMint, rawTokenAmount) {
   const quoteRes = await axios.get('https://public.jupiterapi.com/quote', {
     params: {
       inputMint: inputMint,
       outputMint: SOL_MINT,
-      amount: rawAmount,
-      slippageBps: 150
+      amount: rawTokenAmount,
+      slippageBps: 200
     },
-    timeout: 10000
+    timeout: 15000
   });
 
   const swapRes = await axios.post('https://public.jupiterapi.com/swap', {
@@ -95,7 +89,7 @@ async function executeSell(inputMint, tokenAmount) {
     prioritizationFeeLamports: 'auto'
   }, {
     headers: { 'Content-Type': 'application/json' },
-    timeout: 10000
+    timeout: 15000
   });
 
   const swapTransactionBuf = Buffer.from(swapRes.data.swapTransaction, 'base64');
@@ -110,89 +104,85 @@ async function executeSell(inputMint, tokenAmount) {
   return txid;
 }
 
-// فەرمانا Start
+// فەرمانا دەستپێکێ
 bot.start((ctx) => {
-  ctx.reply(`سلاڤ! بۆتێ ئەکادیمی یێ بازرگانیێ ئامادەیە.\n\nوالێت:\n\`${wallet.publicKey.toBase58()}\``, { parse_mode: 'Markdown' });
+  ctx.reply(`سلاڤ! بۆتێ ئەکادیمی یێ ترەیدا ٢٤ دەمژمێری ئامادەیە.\n\nوالێت:\n\`${wallet.publicKey.toBase58()}\``, { parse_mode: 'Markdown' });
 });
 
-// فەرمانا Balance
+// فەرمانا باڵانسی
 bot.command('balance', async (ctx) => {
   try {
     const balance = await connection.getBalance(wallet.publicKey);
-    ctx.reply(`باڵانسێ جزدانێ: ${(balance / LAMPORTS_PER_SOL).toFixed(4)} SOL`);
+    ctx.reply(`باڵانسێ SOL: ${(balance / LAMPORTS_PER_SOL).toFixed(4)} SOL`);
   } catch (error) {
     ctx.reply(`❌ خەلەتی: ${error.message}`);
   }
 });
 
-// ۳. فەرمانا کارپێکرنا ئۆتۆماتیک (Auto Trading ب دەمەکێ دیارکری)
-bot.command('autotrade', async (ctx) => {
+// فەرمانا ۲۴ دەمژمێری یا ئەکادیمی
+bot.command('start_smart', async (ctx) => {
   const args = ctx.message.text.split(' ');
-  if (args.length < 6) {
-    return ctx.reply('⚠️ فۆرمات نەدروستە!\nشێواز:\n`/autotrade <CA> <SOL_Buy> <Token_Sell> <Interval_Minutes> <Total_Minutes>`\n\nنموونە:\n`/autotrade Ho3DNyGDTuKoFdA1bd6obE9xaL4RuStHUW1eLpodHS53 0.005 1 2 10`\n(کڕینا 0.005 SOL و فرۆتنا 1 تۆکەن هەر 2 خولەک، بۆ ماوێ 10 خولەکان)', { parse_mode: 'Markdown' });
+  const ca = args[1] || 'Ho3DNyGDTuKoFdA1bd6obE9xaL4RuStHUW1eLpodHS53';
+
+  if (isRunning24h) {
+    return ctx.reply('⚠️ سیستەمێ ۲۴ دەمژمێری پێشتر یێ هاتیە کارپێکرن و یێ چالاکە!');
   }
 
-  const ca = args[1];
-  const solBuyAmount = parseFloat(args[2]);
-  const tokenSellAmount = parseFloat(args[3]);
-  const intervalMinutes = parseFloat(args[4]);
-  const totalDurationMinutes = parseFloat(args[5]);
+  isRunning24h = true;
+  tradeCount = 0;
 
-  // پاقژکرنا پرۆسەیێن پێشتر
-  if (autoLoopInterval) clearInterval(autoLoopInterval);
-  if (autoLoopTimeout) clearTimeout(autoLoopTimeout);
-  loopCounter = 0;
+  ctx.reply(`🤖 **سیستەمێ ۲۴ دەمژمێری یێ ژیر دەستپێکر!**\n\n• تۆکەن: \`${ca}\`\n• ستراتیژی: ئەکادیمی (بڕ و دەمێ نەدیارکری/ڕەندەم)\n• ڕاوەستان: بتنێ ب فەرمانا /stop\n\nتێبینی: هەر خولەک د ناڤبەرا ۱ بۆ ۳ خۆلەکان دا ب شێوەیەکێ سروشتی دێ کڕین و فرۆتن هێتە ئەنجامدان.`, { parse_mode: 'Markdown' });
 
-  ctx.reply(`🚀 پرۆسەیا بازرگانی یا ئۆتۆماتیک دەستپێکر!\n\n• تۆکەن: \`${ca}\`\n• قەبارێ کڕینێ: ${solBuyAmount} SOL\n• قەبارێ فرۆتنێ: ${tokenSellAmount} Tokens\n• ماوەیێ دووبارەبوونێ: هەر ${intervalMinutes} خۆلەکان جارەک\n• ماوەیێ تێستێ: ${totalDurationMinutes} خۆلەک\n\nبۆ ڕاگرتنا دەمکی بنڤیسە: /stop`, { parse_mode: 'Markdown' });
+  const executeSmartCycle = async () => {
+    if (!isRunning24h) return;
 
-  // فەنکشنا جێبەجێکرنا ئێک خول
-  const runCycle = async () => {
-    loopCounter++;
-    const currentCount = loopCounter;
+    tradeCount++;
+    const currentLoop = tradeCount;
+
     try {
+      // قەبارەیەکێ ڕەندەم د ناڤبەرا 0.003 بۆ 0.007 SOL
+      const randomSol = (Math.random() * (0.007 - 0.003) + 0.003).toFixed(5);
+      
       // ۱. کڕین
-      const buyTx = await executeBuy(ca, solBuyAmount);
-      ctx.reply(`🔄 [خولێ #${currentCount}] کڕین سەرکەفت:\nhttps://solscan.io/tx/${buyTx}`);
+      const buyResult = await executeBuy(ca, parseFloat(randomSol));
+      ctx.reply(`📈 [خولێ #${currentLoop}] کڕین (${randomSol} SOL):\nhttps://solscan.io/tx/${buyResult.txid}`);
 
-      // ڕاوەستان بۆ ۱۰ چرکەیان تا ترانزاکشنا کڕینێ پەسەند دبیت
-      await new Promise(r => setTimeout(r, 10000));
+      // ڕاوەستانا سروشتی د ناڤبەرا کڕین و فرۆتنێ (۱۵ بۆ ۲۵ چرکە)
+      const waitBetween = Math.floor(Math.random() * 10000) + 15000;
+      await new Promise(r => setTimeout(r, waitBetween));
 
-      // ۲. فرۆتن
-      const sellTx = await executeSell(ca, tokenSellAmount);
-      ctx.reply(`✅ [خولێ #${currentCount}] فرۆتن سەرکەفت:\nhttps://solscan.io/tx/${sellTx}`);
+      if (!isRunning24h) return;
+
+      // ۲. فرۆتنا هەمان بڕێ تۆکەنان
+      const sellTx = await executeSell(ca, buyResult.outAmount);
+      ctx.reply(`📉 [خولێ #${currentLoop}] فرۆتن ب سەرکەفت:\nhttps://solscan.io/tx/${sellTx}`);
+
     } catch (err) {
-      ctx.reply(`⚠️ [خولێ #${currentCount}] خەلەتی: ${err.message}`);
+      console.error(err);
+      ctx.reply(`⚠️ ئاگاداری ل خولێ #${currentLoop}: ${err.message || 'مامەلە سەرنەکەفت، دەربازبوو بۆ خولا بهێت'}`);
+    }
+
+    if (isRunning24h) {
+      // دانانا دەمەکێ ڕەندەم بۆ خولا بهێت (د ناڤبەرا ۱ خولەک بۆ ۳ خولەکان)
+      const nextDelay = Math.floor(Math.random() * (180000 - 60000)) + 60000;
+      loopTimeoutId = setTimeout(executeSmartCycle, nextDelay);
     }
   };
 
-  // دەستپێکرنا یەکەم خول ڕاستەوخۆ
-  await runCycle();
-
-  // خشتەکرنا دووبارەبوونێ
-  autoLoopInterval = setInterval(runCycle, intervalMinutes * 60 * 1000);
-
-  // ڕاگرتنا ئۆتۆماتیک پشتی تەمامبوونا ماوەیێ دیارکری
-  autoLoopTimeout = setTimeout(() => {
-    if (autoLoopInterval) {
-      clearInterval(autoLoopInterval);
-      autoLoopInterval = null;
-      ctx.reply(`🏁 تێست ب سەرکەفتی ب دووماهی هات!\nماوەیێ دیارکری (${totalDurationMinutes} خولەک) تمام بوو. سەرجەم خولێن ئەنجامدراو: ${loopCounter}`);
-    }
-  }, totalDurationMinutes * 60 * 1000);
+  executeSmartCycle();
 });
 
-// ٤. فەرمانا ڕاگرتنا پێشوەخت
+// ڕاگرتنا یەکجارەکی
 bot.command('stop', (ctx) => {
-  if (autoLoopInterval || autoLoopTimeout) {
-    clearInterval(autoLoopInterval);
-    clearTimeout(autoLoopTimeout);
-    autoLoopInterval = null;
-    autoLoopTimeout = null;
-    ctx.reply(`🛑 پڕۆسە هاتە ڕاگرتن. کۆی گشتی خولێن کارپێکراو: ${loopCounter}`);
+  if (isRunning24h) {
+    isRunning24h = false;
+    if (loopTimeoutId) clearTimeout(loopTimeoutId);
+    loopTimeoutId = null;
+    ctx.reply(`🛑 سیستەمێ ۲۴ دەمژمێری هاتە ڕاگرتن.\nسەرجەم مامەلەیێن دروستکراو: ${tradeCount}`);
   } else {
-    ctx.reply('هیچ پڕۆسەیەکی چالاک نینە.');
+    ctx.reply('هیچ پرۆسەیەکی بەردەوام کار ناکەت.');
   }
 });
 
 bot.launch();
-console.log('Bot is running...');
+console.log('Smart 24h Bot is running...');
