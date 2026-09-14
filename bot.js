@@ -8,20 +8,20 @@ const PRIVATE_KEYS_RAW = process.env.PRIVATE_KEY;
 const RPC_URL = process.env.RPC_URL || 'https://api.mainnet-beta.solana.com';
 
 if (!BOT_TOKEN || !PRIVATE_KEYS_RAW) {
-  console.error("خەلەتی: زانیاریێن ژینگەهی کێمن!");
+  console.error("خەلەتی: زانیاریێن پێدڤی نینن!");
   process.exit(1);
 }
 
 const bot = new Telegraf(BOT_TOKEN);
 const connection = new Connection(RPC_URL, 'confirmed');
 
-// چارەسەرییا بنەڕەتی یا خوێندنا کلیلان (چ بە فاریزە، بۆشایی یان دێڕا نوو بیت)
+// ۱. خوێندنا کلیلان
 const wallets = [];
 const keysArray = PRIVATE_KEYS_RAW
-  .replace(/\r?\n|\r/g, ',') // گۆڕینا هەمی دێڕێن نوو بۆ فاریزە
+  .replace(/\r?\n|\r/g, ',')
   .split(',')
   .map(k => k.trim())
-  .filter(k => k.length > 30); // پاککرنەوە ژ هەر دەقەکێ بەتاڵ
+  .filter(k => k.length > 30);
 
 for (const key of keysArray) {
   try {
@@ -30,12 +30,10 @@ for (const key of keysArray) {
     try {
       wallets.push(Keypair.fromSecretKey(Uint8Array.from(JSON.parse(key))));
     } catch (err) {
-      console.error("خەلەتی ل کلیلێ دا:", err.message);
+      console.error("شاشی د کلیلێ دا:", err.message);
     }
   }
 }
-
-console.log(`سەرجەم والێتێن هاتینە خوێندن: ${wallets.length}`);
 
 const SOL_MINT = 'So11111111111111111111111111111111111111112';
 
@@ -60,8 +58,8 @@ async function getTokenBalance(walletPubkey, mintPubkeyStr) {
   }
 }
 
-// کڕین
-async function executeBuy(wallet, outputMint, solAmount) {
+// کڕینا دروستکەرا کەندلان (~$4 - $5)
+async function executeCandleBuy(wallet, outputMint, solAmount) {
   const lamports = Math.floor(solAmount * LAMPORTS_PER_SOL);
   const quoteRes = await axios.get('https://public.jupiterapi.com/quote', {
     params: {
@@ -96,8 +94,8 @@ async function executeBuy(wallet, outputMint, solAmount) {
   return txid;
 }
 
-// فرۆتن
-async function executeSell(wallet, inputMint, targetSolBack) {
+// فرۆتنا نەرم و کەم-جیاوازی (~$5.5 - $6.5)
+async function executeSoftSell(wallet, inputMint, targetSolBack) {
   const targetLamports = Math.floor(targetSolBack * LAMPORTS_PER_SOL);
 
   const reverseQuote = await axios.get('https://public.jupiterapi.com/quote', {
@@ -142,19 +140,19 @@ async function executeSell(wallet, inputMint, targetSolBack) {
     maxRetries: 3
   });
 
-  return { txid, solBack: (Number(sellQuote.data.outAmount) / LAMPORTS_PER_SOL).toFixed(4) };
+  return { txid, solGained: (Number(sellQuote.data.outAmount) / LAMPORTS_PER_SOL).toFixed(4) };
 }
 
-// فەرمانا Start
+// Start
 bot.start((ctx) => {
-  let msg = `🏛️ **سیستەمێ ژیرێ فرە-والێت**\n\nوالێتێن هاتینە ناسین: *${wallets.length}*\n\nلیست:\n`;
+  let msg = `🎯 **بۆتێ لڤاندنا چارتێ + فرۆتنا نەرم (Balanced Drift Bot)**\n\nوالێتێن ئامادە: *${wallets.length}*\n\nلیست:\n`;
   wallets.forEach((w, i) => {
     msg += `${i + 1}. \`${w.publicKey.toBase58()}\`\n`;
   });
   ctx.reply(msg, { parse_mode: 'Markdown' });
 });
 
-// فەرمانا Balance
+// Balance
 bot.command('balance', async (ctx) => {
   try {
     let msg = `📊 **باڵانسێ جزدانان:**\n\n`;
@@ -168,24 +166,26 @@ bot.command('balance', async (ctx) => {
   }
 });
 
-// دەستپێکرن
+// دەستپێکرنا ستراتیژیا لڤاندنا چارتێ و فرۆتنا کەم
 bot.command('start_smart', async (ctx) => {
   const args = ctx.message.text.split(' ');
   const ca = args[1] || 'Ho3DNyGDTuKoFdA1bd6obE9xaL4RuStHUW1eLpodHS53';
 
   if (isRunning24h) {
-    return ctx.reply('⚠️ سیستەم پێشتر یێ چالاکە!');
+    return ctx.reply('⚠️ سیستەم پێشتر یێ دەستپێکری و چالاکە!');
   }
 
   isRunning24h = true;
   tradeCount = 0;
 
-  ctx.reply(`🚀 **سیستەم دەستپێکر!**\n\n• ژمارەیا والێتان: ${wallets.length}\n• مەودایێ دەمی: ۵ بۆ ۱۵ خولەک\n• ڕاگرتن: /stop`);
+  ctx.reply(`📊 **سیستەمێ هەڤسەنگێ لڤاندنا چارتێ کەفتە کار!**\n\n• ئارمانج: ۱. لڤاندنا بەردەوام یا چارتێ  ۲. فرۆتنا کەمەک پتر یا SEVEN بێی شکان\n• ڕێژەیا جێبەجێکرنێ: ۵۵٪ فرۆتن بەرامبەر ۴۵٪ کڕین (جیاوازییا کێم)\n• قەبارە: فرۆتن (~$5.5 - $6.5) | کڕین (~$4 - $5)\n• مەودایێ زەمەنی: ۳ بۆ ۷ خولەکان (چارت نامینیتە وەستان)\n• ڕاگرتن: ب فەرمانا /stop`, { parse_mode: 'Markdown' });
 
-  const runLoop = async () => {
+  const runBalancedCycle = async () => {
     if (!isRunning24h) return;
 
     tradeCount++;
+    const currentLoop = tradeCount;
+
     const randIdx = Math.floor(Math.random() * wallets.length);
     const activeWallet = wallets[randIdx];
     const shortAddr = `${activeWallet.publicKey.toBase58().slice(0, 4)}...${activeWallet.publicKey.toBase58().slice(-4)}`;
@@ -194,37 +194,44 @@ bot.command('start_smart', async (ctx) => {
       const solBal = await connection.getBalance(activeWallet.publicKey);
       const tokenBal = await getTokenBalance(activeWallet.publicKey, ca);
 
+      // ۵۵٪ فرۆتن بەرامبەر ۴۵٪ کڕین (جیاوازییا کێم کو چارت تێک نەچیت)
       let doSell = false;
       if (tokenBal.uiAmount > 5) {
-        doSell = Math.random() < 0.65;
+        doSell = Math.random() < 0.55; 
       }
+
+      // ئەگەر جزدانەکێ SOL گەلەک کێم بوو، دەستبەجێ کەمەکێ دفروشت دا باڵانس هەبیت
       if (solBal < 0.035 * LAMPORTS_PER_SOL && tokenBal.uiAmount > 5) {
         doSell = true;
       }
 
       if (doSell) {
-        const targetSol = (Math.random() * (0.055 - 0.035) + 0.035).toFixed(5);
-        const res = await executeSell(activeWallet, ca, parseFloat(targetSol));
-        ctx.reply(`🔴 [مامەلە #${tradeCount} | والێت ${randIdx + 1} (${shortAddr})]\nفرۆتن ئەنجامدرا (+${res.solBack} SOL):\nhttps://solscan.io/tx/${res.txid}`);
+        // فرۆتنا نەرم: نزیکی 0.036 تا 0.044 SOL (~$5.5 - $6.5)
+        const targetSol = (Math.random() * (0.044 - 0.036) + 0.036).toFixed(5);
+        const res = await executeSoftSell(activeWallet, ca, parseFloat(targetSol));
+        ctx.reply(`🔴 [لڤین #${currentLoop} | والێت ${randIdx + 1} (${shortAddr})]\nفرۆتنا نەرم هاتە کرن (+${res.solGained} SOL هاتە جزدانێ):\nhttps://solscan.io/tx/${res.txid}`);
       } else {
-        const buySol = (Math.random() * (0.035 - 0.022) + 0.022).toFixed(5);
-        const txid = await executeBuy(activeWallet, ca, parseFloat(buySol));
-        ctx.reply(`🟢 [مامەلە #${tradeCount} | والێت ${randIdx + 1} (${shortAddr})]\nکڕین ئەنجامدرا (~${buySol} SOL):\nhttps://solscan.io/tx/${txid}`);
+        // کڕینا لڤاندنا چارتێ: نزیکی 0.026 تا 0.033 SOL (~$4 - $5)
+        const buySol = (Math.random() * (0.033 - 0.026) + 0.026).toFixed(5);
+        const txid = await executeCandleBuy(activeWallet, ca, parseFloat(buySol));
+        ctx.reply(`🟢 [لڤین #${currentLoop} | والێت ${randIdx + 1} (${shortAddr})]\nکڕینا کەندلا کەسک ئەنجامدرا (~${buySol} SOL):\nhttps://solscan.io/tx/${txid}`);
       }
+
     } catch (err) {
       console.error(err);
-      ctx.reply(`⚠️ تێبینی ل مامەلە #${tradeCount}: ${err.message || 'خەلەتی'}`);
+      ctx.reply(`⚠️ تێبینی د مامەلەیا #${currentLoop} دا: ${err.message || 'خەلەتیەک ڕوویدا'}`);
     }
 
     if (isRunning24h) {
-      const nextDelay = Math.floor(Math.random() * (900000 - 300000)) + 300000;
-      const mins = (nextDelay / 60000).toFixed(1);
-      ctx.reply(`⏳ تەڤگەرا بهێت پشتی: ${mins} خولەکان.`);
-      loopTimeoutId = setTimeout(runLoop, nextDelay);
+      // دەمێ زیندی و لڤاندنا چارتێ: ۳ بۆ ۷ خولەک (۱۸۰,۰۰۰ بۆ ۴۲۰,۰۰۰ میللی چرکە)
+      const nextDelay = Math.floor(Math.random() * (420000 - 180000)) + 180000;
+      const minutesWait = (nextDelay / 60000).toFixed(1);
+      ctx.reply(`⏳ لڤینا بهێت یا چارتێ پشتی: ${minutesWait} خولەکان.`);
+      loopTimeoutId = setTimeout(runBalancedCycle, nextDelay);
     }
   };
 
-  runLoop();
+  runBalancedCycle();
 });
 
 // ڕاگرتن
@@ -235,9 +242,9 @@ bot.command('stop', (ctx) => {
     loopTimeoutId = null;
     ctx.reply(`🛑 سیستەم هاتە ڕاگرتن.\nسەرجەم ترانزاکشن: ${tradeCount}`);
   } else {
-    ctx.reply('هیچ پرۆسەیەک کار ناکەت.');
+    ctx.reply('هیچ پڕۆسەیەک کار ناکەت.');
   }
 });
 
 bot.launch();
-console.log('Bot running...');
+console.log('Balanced Drift & Candle Bot is running...');
