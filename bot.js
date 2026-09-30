@@ -187,7 +187,7 @@ bot.command('start_smart', async (ctx) => {
   isRunning24h = true;
   tradeCount = 0;
 
-  ctx.reply(`⚡ **سیستەمی قەبارەی گەورە ($10) دەستی پێکرد!**\n\n• کاتی خولەکان: ١ بۆ ٣ خولەک\n• ڕێژە: ~٥٨٪ فرۆشتن (بۆ قازانجی SOL) | ~٤٢٪ کڕین\n• قەبارە: نزیکەی $8 بۆ $11 بەپێی بازاڕ\n• ڕاگرتن: /stop`);
+  ctx.reply(`⚡ **سیستەمی زۆر خێرا (٣٠ چرکە بۆ ١.٥ خولەک) دەستی پێکرد!**\n\n• کاتی خولەکان: ٣٠ چرکە بۆ ٩٠ چرکە\n• ڕێژە: ~٥٨٪ فرۆشتن (بۆ قازانجی SOL) | ~٤٢٪ کڕین\n• قەبارە: نزیکەی $8 بۆ $11 بەپێی بازاڕ\n• ڕاگرتن: /stop`);
 
   const runLoop = async () => {
     if (!isRunning24h) return;
@@ -213,12 +213,10 @@ bot.command('start_smart', async (ctx) => {
       }
 
       if (doSell) {
-        // فرۆشتن بە قەبارەی نزیکەی $9.5 بۆ $11 (0.065 بۆ 0.080 SOL)
         const targetSol = (Math.random() * (0.080 - 0.065) + 0.065).toFixed(5);
         const res = await executeModerateSell(activeWallet, ca, parseFloat(targetSol));
         ctx.reply(`🔴 [مامەڵەی #${currentLoop} | والێت ${randIdx + 1} (${shortAddr})]\nفرۆشتن سەرکەوتوو بوو (+${res.solGained} SOL):\nhttps://solscan.io/tx/${res.txid}`);
       } else {
-        // کڕین بە قەبارەی نزیکەی $7.5 بۆ $8.5 (0.050 بۆ 0.058 SOL)
         const buySol = (Math.random() * (0.058 - 0.050) + 0.050).toFixed(5);
         const txid = await executeMicroBuy(activeWallet, ca, parseFloat(buySol));
         ctx.reply(`🟢 [مامەڵەی #${currentLoop} | والێت ${randIdx + 1} (${shortAddr})]\nکڕین ئەنجامدرا (~${buySol} SOL):\nhttps://solscan.io/tx/${txid}`);
@@ -230,9 +228,10 @@ bot.command('start_smart', async (ctx) => {
     }
 
     if (isRunning24h) {
-      const nextDelay = Math.floor(Math.random() * (180000 - 60000)) + 60000;
-      const mins = (nextDelay / 60000).toFixed(1);
-      ctx.reply(`⏳ مامەڵەی داهاتوو (#${currentLoop + 1}) دوای ${mins} خولەک ئەنجام دەدرێت.`);
+      // مەودای خێرا: ٣٠ بۆ ٩٠ چرکە (٣٠,٠٠٠ بۆ ٩٠,٠٠٠ میللی چرکە)
+      const nextDelay = Math.floor(Math.random() * (90000 - 30000)) + 30000;
+      const secs = (nextDelay / 1000).toFixed(0);
+      ctx.reply(`⏳ مامەڵەی داهاتوو (#${currentLoop + 1}) دوای ${secs} چرکە ئەنجام دەدرێت.`);
       loopTimeoutId = setTimeout(runLoop, nextDelay);
     }
   };
@@ -252,4 +251,4 @@ bot.command('stop', (ctx) => {
 });
 
 bot.launch();
-console.log('Fast Chart Engine Daemon Online...');
+console.log('Ultra-Fast Chart Engine Daemon Online...');
