@@ -187,7 +187,7 @@ bot.command('start_smart', async (ctx) => {
   isRunning24h = true;
   tradeCount = 0;
 
-  ctx.reply(`🎯 **ستراتیژی قازانجی نەرم و پاراستنی تەواوی چارت دەستی پێکرد!**\n\n• ئامانج: دەرهێنانی نزیکەی $10 قازانجی پوختی ڕۆژانە بە SOL\n• ڕێژە: ٥٤٪ فرۆشتن | ٤٦٪ کڕین (چارت هیچ زەرەر ناکات)\n• قەبارە: کڕین (~$6.0 - $7.0) | فرۆشتن (~$6.3 - $7.4)\n• ماوەی کات: ٤٥ چرکە بۆ ٢.٥ خولەک بێ وەستان\n• ڕاگرتن: /stop`);
+  ctx.reply(`🎯 **ستراتیژی قازانجی خێرا و پاراستنی چارت دەستی پێکرد!**\n\n• ئامانج: دەرهێنانی قازانجی بەردەوام بە SOL و چالاککردنی چارت\n• ڕێژە: ٥٤٪ فرۆشتن | ٤٦٪ کڕین\n• قەبارە: کڕین (~$7.5 - $9.0) | فرۆشتن (~$8.2 - $10.0)\n• ماوەی کات: ٢٥ چرکە بۆ ١ خولەک\n• ڕاگرتن: /stop`);
 
   const runLoop = async () => {
     if (!isRunning24h) return;
@@ -203,7 +203,6 @@ bot.command('start_smart', async (ctx) => {
       const solBal = await connection.getBalance(activeWallet.publicKey);
       const tokenBal = await getTokenBalance(activeWallet.publicKey, ca);
 
-      // هاوسەنگی: ٥٤٪ فرۆشتن بۆ قازانجی هێمن
       let doSell = false;
       if (tokenBal.uiAmount > 5) {
         doSell = Math.random() < 0.54;
@@ -214,25 +213,25 @@ bot.command('start_smart', async (ctx) => {
       }
 
       if (doSell) {
-        // فرۆشتنی زۆر نەرم بە جیاوازییەکی کەم (~$6.3 بۆ $7.4)
-        const targetSol = (Math.random() * (0.052 - 0.044) + 0.044).toFixed(5);
+        // فرۆشتنی گەورەتر بۆ کۆکردنەوەی SOL (~0.056 بۆ 0.068 SOL)
+        const targetSol = (Math.random() * (0.068 - 0.056) + 0.056).toFixed(5);
         const res = await executeMicroSell(activeWallet, ca, parseFloat(targetSol));
-        ctx.reply(`🔴 [مامەڵە #${currentLoop} | والێت ${randIdx + 1} (${shortAddr})]\nفرۆشتنی نەرم ئەنجامدرا (+${res.solGained} SOL هاتە جزدان):\nhttps://solscan.io/tx/${res.txid}`);
+        ctx.reply(`🔴 [مامەڵە #${currentLoop} | والێت ${randIdx + 1} (${shortAddr})]\nفرۆشتن ئەنجامدرا (+${res.solGained} SOL هاتە جزدان):\nhttps://solscan.io/tx/${res.txid}`);
       } else {
-        // کڕینی پشتیوانی کەندڵ (~$6.0 بۆ $7.0)
-        const buySol = (Math.random() * (0.048 - 0.040) + 0.040).toFixed(5);
+        // کڕینی پشتیوانی چارت (~0.050 بۆ 0.060 SOL)
+        const buySol = (Math.random() * (0.060 - 0.050) + 0.050).toFixed(5);
         const txid = await executeMicroBuy(activeWallet, ca, parseFloat(buySol));
         ctx.reply(`🟢 [مامەڵە #${currentLoop} | والێت ${randIdx + 1} (${shortAddr})]\nکڕینی سەوزکردنی چارت ئەنجامدرا (~${buySol} SOL):\nhttps://solscan.io/tx/${txid}`);
       }
 
     } catch (err) {
       console.error(err);
-      ctx.reply(`⚠️ ئاگاداری لە خولی #${currentLoop}: ${err.message || 'خەتا لە تۆڕ'}`);
+      ctx.reply(`⚠️️ ئاگاداری لە خولی #${currentLoop}: ${err.message || 'خەتا لە تۆڕ'}`);
     }
 
     if (isRunning24h) {
-      // ٤٥ چرکە بۆ ٢.٥ خولەک (٤٥,٠٠٠ بۆ ١٥٠,٠٠٠ میللی چرکە)
-      const nextDelay = Math.floor(Math.random() * (150000 - 45000)) + 45000;
+      // ٢٥ چرکە بۆ ٦٠ چرکە (٢٥,٠٠٠ بۆ ٦٠,٠٠٠ میللی چرکە)
+      const nextDelay = Math.floor(Math.random() * (60000 - 25000)) + 25000;
       const secs = (nextDelay / 1000).toFixed(0);
       ctx.reply(`⏳ مامەڵەی داهاتوو (#${currentLoop + 1}) دوای ${secs} چرکە ئەنجام دەدرێت.`);
       loopTimeoutId = setTimeout(runLoop, nextDelay);
