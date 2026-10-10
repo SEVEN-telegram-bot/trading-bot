@@ -1,0 +1,10 @@
+{
+  "name": "solana-paper-trading-bot",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Owner-only Telegram paper trading and read-only wallet monitoring. No transaction signing.",
+  "main": "bot.js",
+  "engines": { "node": ">=22" },
+  "scripts": { "start": "node --env-file-if-exists=.env bot.js", "test": "node --test" },
+  "dependencies": {}
+}
