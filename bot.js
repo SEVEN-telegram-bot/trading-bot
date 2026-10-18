@@ -6,7 +6,8 @@ const http = require('http');
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const PRIVATE_KEYS_RAW = process.env.PRIVATE_KEY;
-const RPC_URL = process.env.RPC_URL || 'https://api.mainnet-beta.solana.com';
+// بەکارهێنانا باشترین RPC یێ بەلاش یێ جێگیر
+const RPC_URL = process.env.RPC_URL || 'https://solana-rpc.publicnode.com';
 const PORT = process.env.PORT || 10000;
 
 if (!BOT_TOKEN || !PRIVATE_KEYS_RAW) {
@@ -24,7 +25,10 @@ http.createServer((req, res) => {
 });
 
 const bot = new Telegraf(BOT_TOKEN);
-const connection = new Connection(RPC_URL, 'confirmed');
+const connection = new Connection(RPC_URL, {
+  commitment: 'confirmed',
+  confirmTransactionInitialTimeout: 60000
+});
 
 const wallets = [];
 const keysArray = PRIVATE_KEYS_RAW
@@ -57,9 +61,8 @@ let loopTimeoutId = null;
 let tradeCount = 0;
 let lastUsedWalletIdx = -1;
 
-// مێژوویا کارکرنا هەر والێتەکی ب سەربەخۆیی دا نەتیجە وەک ئێک بمینیت
 const walletTradeStates = wallets.map(() => ({
-  lastAction: 'SELL' // دەستپێکێ دبیتە کڕین
+  lastAction: 'SELL'
 }));
 
 const httpHeaders = {
@@ -210,7 +213,6 @@ bot.command('start_smart', async (ctx) => {
     tradeCount++;
     const currentLoop = tradeCount;
 
-    // هەلبژارتنا والێتەکێ جودا ژ یێ پێشتر
     let randIdx;
     do {
       randIdx = Math.floor(Math.random() * wallets.length);
@@ -224,7 +226,6 @@ bot.command('start_smart', async (ctx) => {
       const solBal = await connection.getBalance(activeWallet.publicKey);
       const tokenBal = await getTokenBalance(activeWallet.publicKey, ca);
 
-      // بڕیاردانا ل سەر کڕین یان فرۆتنێ ل گۆرەی مێژوویا وی والێتی بخۆ (دا هاوسەنگ بمینیت)
       let doSell = false;
       if (walletTradeStates[randIdx].lastAction === 'BUY' && tokenBal.uiAmount > 2) {
         doSell = true;
@@ -235,13 +236,11 @@ bot.command('start_smart', async (ctx) => {
       }
 
       if (doSell) {
-        // فرۆتنەکا هویر ل سەر چارتێ ب بڕێ (~0.015 بۆ 0.028 SOL / نزیکی $2.2 بۆ $4.2)
         const targetSol = (Math.random() * (0.028 - 0.015) + 0.015).toFixed(5);
         const res = await executeAcademicSell(activeWallet, ca, parseFloat(targetSol));
         walletTradeStates[randIdx].lastAction = 'SELL';
         ctx.reply(`🔴 [خۆلا #${currentLoop} | والێت ${randIdx + 1} (${shortAddr})]\nفرۆتنا ئەکادیمی یا هاوسەنگ هاتە ئەنجامدان (+${res.solGained} SOL هاتە ناڤ هەمان والێت):\nhttps://solscan.io/tx/${res.txid}`);
       } else {
-        // کڕینەکا مرۆڤی یا کەسک ل سەر چارتێ ب بڕێ (~0.014 بۆ 0.027 SOL / نزیکی $2.0 بۆ $4.0)
         const buySol = (Math.random() * (0.027 - 0.014) + 0.014).toFixed(5);
         const txid = await executeAcademicBuy(activeWallet, ca, parseFloat(buySol));
         walletTradeStates[randIdx].lastAction = 'BUY';
@@ -254,7 +253,6 @@ bot.command('start_smart', async (ctx) => {
     }
 
     if (isRunning24h) {
-      // دەمێ هەڕەمەکی یێ سروشتی: ١٢٠ هەتا ٣٦٠ چرکە (٢ بۆ ٦ خولەک)
       const nextDelay = Math.floor(Math.random() * (360000 - 120000)) + 120000;
       const mins = (nextDelay / 60000).toFixed(1);
       ctx.reply(`⏳ جووڵەیا بهێت (#${currentLoop + 1}) پشتی ${mins} خولەکێن دی دێ هێتە ئەنجامدان.`);
@@ -277,4 +275,4 @@ bot.command('stop', (ctx) => {
 });
 
 bot.launch();
-console.log('Academic Balanced Engine running...');
+console.log('Academic Balanced Engine running with PublicNode RPC...');
