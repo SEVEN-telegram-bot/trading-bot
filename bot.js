@@ -57,6 +57,12 @@ let loopTimeoutId = null;
 let tradeCount = 0;
 let lastUsedWalletIdx = -1;
 
+const httpHeaders = {
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'Accept': 'application/json',
+  'Content-Type': 'application/json'
+};
+
 async function getTokenBalance(walletPubkey, mintPubkeyStr) {
   try {
     const response = await connection.getParsedTokenAccountsByOwner(walletPubkey, {
@@ -75,24 +81,25 @@ async function getTokenBalance(walletPubkey, mintPubkeyStr) {
 
 async function executeHumanBuy(wallet, outputMint, solAmount) {
   const lamports = Math.floor(solAmount * LAMPORTS_PER_SOL);
-  const quoteRes = await axios.get('https://public.jupiterapi.com/quote', {
+  const quoteRes = await axios.get('https://quote-api.jup.ag/v6/quote', {
     params: {
       inputMint: SOL_MINT,
       outputMint: outputMint,
       amount: lamports,
       slippageBps: 200
     },
+    headers: httpHeaders,
     timeout: 15000
   });
 
-  const swapRes = await axios.post('https://public.jupiterapi.com/swap', {
+  const swapRes = await axios.post('https://quote-api.jup.ag/v6/swap', {
     quoteResponse: quoteRes.data,
     userPublicKey: wallet.publicKey.toBase58(),
     wrapAndUnwrapSol: true,
     dynamicComputeUnitLimit: true,
     prioritizationFeeLamports: 'auto'
   }, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: httpHeaders,
     timeout: 15000
   });
 
@@ -111,36 +118,38 @@ async function executeHumanBuy(wallet, outputMint, solAmount) {
 async function executeHumanSell(wallet, inputMint, targetSolBack) {
   const targetLamports = Math.floor(targetSolBack * LAMPORTS_PER_SOL);
 
-  const reverseQuote = await axios.get('https://public.jupiterapi.com/quote', {
+  const reverseQuote = await axios.get('https://quote-api.jup.ag/v6/quote', {
     params: {
       inputMint: SOL_MINT,
       outputMint: inputMint,
       amount: targetLamports,
       slippageBps: 200
     },
+    headers: httpHeaders,
     timeout: 15000
   });
 
   const tokensNeeded = reverseQuote.data.outAmount;
 
-  const sellQuote = await axios.get('https://public.jupiterapi.com/quote', {
+  const sellQuote = await axios.get('https://quote-api.jup.ag/v6/quote', {
     params: {
       inputMint: inputMint,
       outputMint: SOL_MINT,
       amount: tokensNeeded,
       slippageBps: 250
     },
+    headers: httpHeaders,
     timeout: 15000
   });
 
-  const swapRes = await axios.post('https://public.jupiterapi.com/swap', {
+  const swapRes = await axios.post('https://quote-api.jup.ag/v6/swap', {
     quoteResponse: sellQuote.data,
     userPublicKey: wallet.publicKey.toBase58(),
     wrapAndUnwrapSol: true,
     dynamicComputeUnitLimit: true,
     prioritizationFeeLamports: 'auto'
   }, {
-    headers: { 'Content-Type': 'application/json' },
+    headers: httpHeaders,
     timeout: 15000
   });
 
@@ -196,7 +205,6 @@ bot.command('start_smart', async (ctx) => {
     tradeCount++;
     const currentLoop = tradeCount;
 
-    // هەڵبژاردنی والێتێک کە لە خولی پێشوو بەکارنەهاتبێت تا وەک دوو کەسی جیاواز دەرکەوێت
     let randIdx;
     do {
       randIdx = Math.floor(Math.random() * wallets.length);
@@ -210,7 +218,6 @@ bot.command('start_smart', async (ctx) => {
       const solBal = await connection.getBalance(activeWallet.publicKey);
       const tokenBal = await getTokenBalance(activeWallet.publicKey, ca);
 
-      // بڕیار لەسەر کڕین یان فرۆشتن بە ڕێژەی ٥٣٪ فرۆشتن / ٤٧٪ کڕین
       let doSell = false;
       if (tokenBal.uiAmount > 3) {
         doSell = Math.random() < 0.53;
@@ -221,12 +228,10 @@ bot.command('start_smart', async (ctx) => {
       }
 
       if (doSell) {
-        // فرۆشتنی هەڕەمەکی بە بڕێکی زۆر سروشتی (0.022 بۆ 0.048 SOL / نزیکەی $3.3 بۆ $7.2)
         const targetSol = (Math.random() * (0.048 - 0.022) + 0.022).toFixed(5);
         const res = await executeHumanSell(activeWallet, ca, parseFloat(targetSol));
         ctx.reply(`🔴 [مامەڵە #${currentLoop} | والێت ${randIdx + 1} (${shortAddr})]\nفرۆشتنی ئاسایی ئەنجامدرا (+${res.solGained} SOL):\nhttps://solscan.io/tx/${res.txid}`);
       } else {
-        // کڕینی هەڕەمەکی وەک کەسێکی تازە (0.018 بۆ 0.042 SOL / نزیکەی $2.7 بۆ $6.3)
         const buySol = (Math.random() * (0.042 - 0.018) + 0.018).toFixed(5);
         const txid = await executeHumanBuy(activeWallet, ca, parseFloat(buySol));
         ctx.reply(`🟢 [مامەڵە #${currentLoop} | والێت ${randIdx + 1} (${shortAddr})]\nکڕینی سەوزکردنی چارت (~${buySol} SOL):\nhttps://solscan.io/tx/${txid}`);
@@ -238,7 +243,6 @@ bot.command('start_smart', async (ctx) => {
     }
 
     if (isRunning24h) {
-      // کاتی هەڕەمەکی لە نێوان ٩٠ چرکە بۆ ٣٣٠ چرکە (١.٥ بۆ ٥.٥ خولەک)
       const nextDelay = Math.floor(Math.random() * (330000 - 90000)) + 90000;
       const mins = (nextDelay / 60000).toFixed(1);
       ctx.reply(`⏳ جووڵەی داهاتوو (#${currentLoop + 1}) دوای ${mins} خولەک ئەنجام دەدرێت.`);
