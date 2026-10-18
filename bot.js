@@ -58,7 +58,7 @@ let tradeCount = 0;
 let lastUsedWalletIdx = -1;
 
 const httpHeaders = {
-  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
   'Accept': 'application/json',
   'Content-Type': 'application/json'
 };
@@ -81,7 +81,7 @@ async function getTokenBalance(walletPubkey, mintPubkeyStr) {
 
 async function executeHumanBuy(wallet, outputMint, solAmount) {
   const lamports = Math.floor(solAmount * LAMPORTS_PER_SOL);
-  const quoteRes = await axios.get('https://quote-api.jup.ag/v6/quote', {
+  const quoteRes = await axios.get('https://api.jup.ag/swap/v1/quote', {
     params: {
       inputMint: SOL_MINT,
       outputMint: outputMint,
@@ -92,7 +92,7 @@ async function executeHumanBuy(wallet, outputMint, solAmount) {
     timeout: 15000
   });
 
-  const swapRes = await axios.post('https://quote-api.jup.ag/v6/swap', {
+  const swapRes = await axios.post('https://api.jup.ag/swap/v1/swap', {
     quoteResponse: quoteRes.data,
     userPublicKey: wallet.publicKey.toBase58(),
     wrapAndUnwrapSol: true,
@@ -118,7 +118,7 @@ async function executeHumanBuy(wallet, outputMint, solAmount) {
 async function executeHumanSell(wallet, inputMint, targetSolBack) {
   const targetLamports = Math.floor(targetSolBack * LAMPORTS_PER_SOL);
 
-  const reverseQuote = await axios.get('https://quote-api.jup.ag/v6/quote', {
+  const reverseQuote = await axios.get('https://api.jup.ag/swap/v1/quote', {
     params: {
       inputMint: SOL_MINT,
       outputMint: inputMint,
@@ -131,7 +131,7 @@ async function executeHumanSell(wallet, inputMint, targetSolBack) {
 
   const tokensNeeded = reverseQuote.data.outAmount;
 
-  const sellQuote = await axios.get('https://quote-api.jup.ag/v6/quote', {
+  const sellQuote = await axios.get('https://api.jup.ag/swap/v1/quote', {
     params: {
       inputMint: inputMint,
       outputMint: SOL_MINT,
@@ -142,7 +142,7 @@ async function executeHumanSell(wallet, inputMint, targetSolBack) {
     timeout: 15000
   });
 
-  const swapRes = await axios.post('https://quote-api.jup.ag/v6/swap', {
+  const swapRes = await axios.post('https://api.jup.ag/swap/v1/swap', {
     quoteResponse: sellQuote.data,
     userPublicKey: wallet.publicKey.toBase58(),
     wrapAndUnwrapSol: true,
