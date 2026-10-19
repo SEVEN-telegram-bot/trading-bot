@@ -9,11 +9,10 @@ const PRIVATE_KEYS_RAW = process.env.PRIVATE_KEY;
 const PORT = process.env.PORT || 10000;
 
 if (!BOT_TOKEN || !PRIVATE_KEYS_RAW) {
-  console.error("هەڵە: کلیلی تلگرام یان والێتەکان نییە!");
+  console.error("هەڵە: کلیلەکان بەردەست نین!");
   process.exit(1);
 }
 
-// فرە-نۆد بۆ نەمانا هەر خەلەتیەکێ
 const RPC_ENDPOINTS = [
   'https://solana-rpc.publicnode.com',
   'https://api.mainnet-beta.solana.com',
@@ -34,7 +33,7 @@ function switchRpc() {
 
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.write('Closed Loop Isolated Market Maker Running.');
+  res.write('Strict Buy-Sell Loop Engine Active.');
   res.end();
 }).listen(PORT, () => {
   console.log(`Daemon active on port ${PORT}`);
@@ -73,10 +72,9 @@ let loopTimeoutId = null;
 let tradeCount = 0;
 let currentWalletIndex = 0;
 
-// هەر والێتەک ب تەمامی حالەتێ خۆ یێ سەربەخۆ هەیە: کڕین -> فڕۆتن -> کڕین -> فڕۆتن
-const walletStatus = wallets.map(() => ({
-  nextAction: 'BUY',
-  lastSolAmount: 0.018
+// یاسای توند: هەر والێتێک کڕی دەبێت دەستبەجێ بفڕۆشێت
+const walletCycle = wallets.map(() => ({
+  action: 'BUY'
 }));
 
 const httpHeaders = {
@@ -156,27 +154,12 @@ async function executeBuy(wallet, outputMint, solAmount) {
   return txid;
 }
 
-async function executeSell(wallet, inputMint, targetSolBack) {
-  const targetLamports = Math.floor(targetSolBack * LAMPORTS_PER_SOL);
-
-  const reverseQuote = await axios.get('https://api.jup.ag/swap/v1/quote', {
-    params: {
-      inputMint: SOL_MINT,
-      outputMint: inputMint,
-      amount: targetLamports,
-      slippageBps: 200
-    },
-    headers: httpHeaders,
-    timeout: 15000
-  });
-
-  const tokensNeeded = reverseQuote.data.outAmount;
-
+async function executeSell(wallet, inputMint, tokenRawAmount) {
   const sellQuote = await axios.get('https://api.jup.ag/swap/v1/quote', {
     params: {
       inputMint: inputMint,
       outputMint: SOL_MINT,
-      amount: tokensNeeded,
+      amount: tokenRawAmount,
       slippageBps: 250
     },
     headers: httpHeaders,
@@ -208,7 +191,7 @@ async function executeSell(wallet, inputMint, targetSolBack) {
 }
 
 bot.start((ctx) => {
-  let msg = `🔒 **عەقلێ هاوسەنگێ پاقژ (Closed Loop MM)**\n\nهەژمارا والێتان: *${wallets.length}*\nهەر والێتەک پارەیێ خۆ دزڤڕینیتە خۆ، نە چ پارە دچتە دەرڤە و نە والێتەک ڤالا دبیت.\n\n`;
+  let msg = `⚙️ **سیستەمی ڕێکی کڕین و فرۆشتنی هاوسەنگ**\n\nژمارەی والێتەکان: *${wallets.length}*\nهەر مامەڵەیەکی کڕین دەستبەجێ بە فرۆشتن هاوسەنگ دەکرێتەوە.\n\n`;
   wallets.forEach((w, i) => {
     msg += `${i + 1}. \`${w.publicKey.toBase58()}\`\n`;
   });
@@ -217,14 +200,14 @@ bot.start((ctx) => {
 
 bot.command('balance', async (ctx) => {
   try {
-    let msg = `📊 **باڵانسێ نوکە یێ هەر ٤ جزدانان:**\n\n`;
+    let msg = `📊 **باڵانسی ئێستای والێتەکان:**\n\n`;
     for (let i = 0; i < wallets.length; i++) {
       const b = await safeGetBalance(wallets[i].publicKey);
       msg += `والێت ${i + 1}: ${(b / LAMPORTS_PER_SOL).toFixed(4)} SOL\n`;
     }
     ctx.reply(msg, { parse_mode: 'Markdown' });
   } catch (error) {
-    ctx.reply(`کێشە د باڵانسیدا: ${error.message}`);
+    ctx.reply(`کێشە لە خوێندنەوەی باڵانس: ${error.message}`);
   }
 });
 
@@ -239,7 +222,7 @@ bot.command('start_smart', async (ctx) => {
   isRunning24h = true;
   tradeCount = 0;
 
-  ctx.reply(`⚡ **سیستەمێ تۆکمە یێ بێ-زەرەر هاتە کارکرن!**\n\n• یاسا: کڕین و فڕۆتن ب دۆرێ د هەمان والێت دا (پارە کەم نابیت).\n• بڕ: $1.8 بۆ $3.5 ب شێوەیەکێ مرۆڤی.\n• دەمێ لڤینێ: ٢ بۆ ٥ خولەک.\n• راوەستاندن: /stop`);
+  ctx.reply(`🔄 **مۆدی کڕین و فرۆشتنی هاوسەنگ (تەنها بۆ جوڵاندنی چارت) دەستی پێکرد!**\n\n• یاسا: کڕین دەستبەجێ بە فرۆشتن دادەخرێتەوە تا باڵانس کەم نەکات.\n• بارستەی مامەڵە: نزیکەی $2 بۆ $3.5 بە شێوازی مرۆڤی.\n• ماوەی نێوان خولەکان: ٢ بۆ ٤.٥ خولەک.\n• ڕاگرتن: /stop`);
 
   const runLoop = async () => {
     if (!isRunning24h) return;
@@ -247,49 +230,42 @@ bot.command('start_smart', async (ctx) => {
     tradeCount++;
     const currentLoop = tradeCount;
 
-    // گەڕان ل سەر هەر ٤ والێتان ب نۆرە دا هەمی وەک ئێک کار بکەن
     const activeWalletIdx = currentWalletIndex;
     currentWalletIndex = (currentWalletIndex + 1) % wallets.length;
 
     const activeWallet = wallets[activeWalletIdx];
-    const status = walletStatus[activeWalletIdx];
     const shortAddr = `${activeWallet.publicKey.toBase58().slice(0, 4)}...${activeWallet.publicKey.toBase58().slice(-4)}`;
 
     try {
       const solBal = await safeGetBalance(activeWallet.publicKey);
       const tokenBal = await safeGetTokenBalance(activeWallet.publicKey, ca);
 
-      // بڕیارا تۆکمە: ئەگەر بڕێ کڕینێ کربیت ئێکسەر دفڕۆشیت، دا والێت ڤالا نەبیت
-      if (status.nextAction === 'SELL') {
-        if (tokenBal.uiAmount > 1) {
-          const sellAmount = status.lastSolAmount; // هەمان بڕێ کڕی ڤەدگەڕینیت
-          const res = await executeSell(activeWallet, ca, sellAmount);
-          status.nextAction = 'BUY'; // جاری داهاتی دکڕێت
-          ctx.reply(`🔴 [خۆلا #${currentLoop} | والێت ${activeWalletIdx + 1} (${shortAddr})]\nفڕۆتنا هاوسەنگکرنێ ئەنجامدا (+${res.solGained} SOL زڤڕییە هەمان والێت):\nhttps://solscan.io/tx/${res.txid}`);
-        } else {
-          status.nextAction = 'BUY';
-        }
+      // ئەگەر تۆکنی هەبێت ڕاستەوخۆ دەفڕۆشێت، ئەگەر نا دەیکڕێت
+      if (walletCycle[activeWalletIdx].action === 'SELL' && tokenBal.uiAmount > 0.01) {
+        // فرۆشتنی بەشێک یان هەموو ئەو بڕەی هەیەتی بۆ گەڕاندنەوەی SOL
+        const res = await executeSell(activeWallet, ca, tokenBal.rawAmount);
+        walletCycle[activeWalletIdx].action = 'BUY'; // نۆرەی داهاتوو دەیکات بە کڕین
+        ctx.reply(`🔴 [خولی #${currentLoop} | والێت ${activeWalletIdx + 1} (${shortAddr})]\nفرۆشتن ئەنجامدرا (+${res.solGained} SOL گەڕایەوە بۆ هەمان والێت):\nhttps://solscan.io/tx/${res.txid}`);
       } else {
-        if (solBal > 0.025 * LAMPORTS_PER_SOL) {
-          const buyAmount = parseFloat((Math.random() * (0.024 - 0.014) + 0.014).toFixed(5));
-          status.lastSolAmount = buyAmount;
+        if (solBal > 0.03 * LAMPORTS_PER_SOL) {
+          const buyAmount = parseFloat((Math.random() * (0.022 - 0.014) + 0.014).toFixed(5));
           const txid = await executeBuy(activeWallet, ca, buyAmount);
-          status.nextAction = 'SELL'; // جاری داهاتی ب زۆرەملێ دفڕۆشیت دا پارە نەچیت
-          ctx.reply(`🟢 [خۆلا #${currentLoop} | والێت ${activeWalletIdx + 1} (${shortAddr})]\nکڕینا کەسککرنا چارتێ ئەنجامدا (~${buyAmount} SOL ژ هەمان والێت):\nhttps://solscan.io/tx/${txid}`);
+          walletCycle[activeWalletIdx].action = 'SELL'; // نۆرەی داهاتوو بە زۆرەملێ دەبێت بە فرۆشتن تا باڵانس دانەبەزێت
+          ctx.reply(`🟢 [خولی #${currentLoop} | والێت ${activeWalletIdx + 1} (${shortAddr})]\nکڕینی سەوزکردنی چارت ئەنجامدرا (~${buyAmount} SOL لە هەمان والێت):\nhttps://solscan.io/tx/${txid}`);
         } else {
-          ctx.reply(`⚠️ والێت ${activeWalletIdx + 1} پێویستی ب کێمەک SOL هەیە دا دەستپێکەت.`);
+          ctx.reply(`⚠️ والێت ${activeWalletIdx + 1} پێویستی بە تۆزێک SOL هەیە.`);
         }
       }
 
     } catch (err) {
       console.error(err);
-      ctx.reply(`⚠️ ئاگاداری ل خۆلا #${currentLoop}: ${err.message || 'هەڵە لە تۆڕ'}`);
+      ctx.reply(`⚠️ ئاگاداری لە خولی #${currentLoop}: ${err.message || 'هەڵە لە تۆڕ'}`);
     }
 
     if (isRunning24h) {
-      const nextDelay = Math.floor(Math.random() * (300000 - 120000)) + 120000;
+      const nextDelay = Math.floor(Math.random() * (270000 - 120000)) + 120000;
       const mins = (nextDelay / 60000).toFixed(1);
-      ctx.reply(`⏳ جووڵەیا بهێت (#${currentLoop + 1}) پشتی ${mins} خولەکێن دی دێ هێتە ئەنجامدان.`);
+      ctx.reply(`⏳ جووڵەی داهاتوو (#${currentLoop + 1}) دوای ${mins} خولەک ئەنجام دەدرێت.`);
       loopTimeoutId = setTimeout(runLoop, nextDelay);
     }
   };
@@ -302,11 +278,11 @@ bot.command('stop', (ctx) => {
     isRunning24h = false;
     if (loopTimeoutId) clearTimeout(loopTimeoutId);
     loopTimeoutId = null;
-    ctx.reply(`🛑 بۆت هاتە راوەستاندن.\nکۆیا گشتی: ${tradeCount}`);
+    ctx.reply(`🛑 بۆت ڕاگیرا.\nکۆی گشتی: ${tradeCount}`);
   } else {
-    ctx.reply('بۆت یێ راوەستیایە.');
+    ctx.reply('بۆت ناچالاکە.');
   }
 });
 
 bot.launch();
-console.log('Closed Loop Bot operational.');
+console.log('Strict Loop Bot operational.');
