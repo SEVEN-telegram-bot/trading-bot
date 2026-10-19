@@ -9,11 +9,11 @@ const PRIVATE_KEYS_RAW = process.env.PRIVATE_KEY;
 const PORT = process.env.PORT || 10000;
 
 if (!BOT_TOKEN || !PRIVATE_KEYS_RAW) {
-  console.error("هەڵە: زانیارییە سەرەکییەکان بەردەست نین!");
+  console.error("هەڵە: کلیلی تلگرام یان والێتەکان نییە!");
   process.exit(1);
 }
 
-// پێڕستی باشترین نۆدە خۆڕاییە جێگیرەکان بۆ تێپەڕاندنی 429
+// فرە-نۆد بۆ نەمانا هەر خەلەتیەکێ
 const RPC_ENDPOINTS = [
   'https://solana-rpc.publicnode.com',
   'https://api.mainnet-beta.solana.com',
@@ -34,10 +34,10 @@ function switchRpc() {
 
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.write('Academic Bot active with Multi-RPC.');
+  res.write('Closed Loop Isolated Market Maker Running.');
   res.end();
 }).listen(PORT, () => {
-  console.log(`Server active on port ${PORT}`);
+  console.log(`Daemon active on port ${PORT}`);
 });
 
 const bot = new Telegraf(BOT_TOKEN);
@@ -71,10 +71,12 @@ const SOL_MINT = 'So11111111111111111111111111111111111111112';
 let isRunning24h = false;
 let loopTimeoutId = null;
 let tradeCount = 0;
-let lastUsedWalletIdx = -1;
+let currentWalletIndex = 0;
 
-const walletTradeStates = wallets.map(() => ({
-  lastAction: 'SELL'
+// هەر والێتەک ب تەمامی حالەتێ خۆ یێ سەربەخۆ هەیە: کڕین -> فڕۆتن -> کڕین -> فڕۆتن
+const walletStatus = wallets.map(() => ({
+  nextAction: 'BUY',
+  lastSolAmount: 0.018
 }));
 
 const httpHeaders = {
@@ -90,7 +92,7 @@ async function safeGetBalance(pubkey) {
       return await conn.getBalance(pubkey);
     } catch (err) {
       switchRpc();
-      await new Promise(r => setTimeout(r, 1200));
+      await new Promise(r => setTimeout(r, 1000));
     }
   }
   return 0;
@@ -111,13 +113,13 @@ async function safeGetTokenBalance(walletPubkey, mintPubkeyStr) {
       };
     } catch (err) {
       switchRpc();
-      await new Promise(r => setTimeout(r, 1200));
+      await new Promise(r => setTimeout(r, 1000));
     }
   }
   return { rawAmount: '0', uiAmount: 0 };
 }
 
-async function executeAcademicBuy(wallet, outputMint, solAmount) {
+async function executeBuy(wallet, outputMint, solAmount) {
   const lamports = Math.floor(solAmount * LAMPORTS_PER_SOL);
   const quoteRes = await axios.get('https://api.jup.ag/swap/v1/quote', {
     params: {
@@ -154,7 +156,7 @@ async function executeAcademicBuy(wallet, outputMint, solAmount) {
   return txid;
 }
 
-async function executeAcademicSell(wallet, inputMint, targetSolBack) {
+async function executeSell(wallet, inputMint, targetSolBack) {
   const targetLamports = Math.floor(targetSolBack * LAMPORTS_PER_SOL);
 
   const reverseQuote = await axios.get('https://api.jup.ag/swap/v1/quote', {
@@ -206,7 +208,7 @@ async function executeAcademicSell(wallet, inputMint, targetSolBack) {
 }
 
 bot.start((ctx) => {
-  let msg = `🏛️ **سیستەمی ئەکادیمی هاوسەنگ**\nژمارەی والێتەکان: *${wallets.length}*\n\n`;
+  let msg = `🔒 **عەقلێ هاوسەنگێ پاقژ (Closed Loop MM)**\n\nهەژمارا والێتان: *${wallets.length}*\nهەر والێتەک پارەیێ خۆ دزڤڕینیتە خۆ، نە چ پارە دچتە دەرڤە و نە والێتەک ڤالا دبیت.\n\n`;
   wallets.forEach((w, i) => {
     msg += `${i + 1}. \`${w.publicKey.toBase58()}\`\n`;
   });
@@ -215,14 +217,14 @@ bot.start((ctx) => {
 
 bot.command('balance', async (ctx) => {
   try {
-    let msg = `📊 **باڵانسی ئێستا:**\n\n`;
+    let msg = `📊 **باڵانسێ نوکە یێ هەر ٤ جزدانان:**\n\n`;
     for (let i = 0; i < wallets.length; i++) {
       const b = await safeGetBalance(wallets[i].publicKey);
       msg += `والێت ${i + 1}: ${(b / LAMPORTS_PER_SOL).toFixed(4)} SOL\n`;
     }
     ctx.reply(msg, { parse_mode: 'Markdown' });
   } catch (error) {
-    ctx.reply(`کێشە لە خوێندنەوەی باڵانس: ${error.message}`);
+    ctx.reply(`کێشە د باڵانسیدا: ${error.message}`);
   }
 });
 
@@ -237,7 +239,7 @@ bot.command('start_smart', async (ctx) => {
   isRunning24h = true;
   tradeCount = 0;
 
-  ctx.reply(`🎓 **مۆدی ئەکادیمی دژە-بلۆک (Anti-429) دەستی پێکرد!**\n• قەبارە: $1.8 بۆ $4.5 هاوسەنگ\n• کاتی خولەکان: ٢ بۆ ٥ خولەک\n• ڕاگرتن: /stop`);
+  ctx.reply(`⚡ **سیستەمێ تۆکمە یێ بێ-زەرەر هاتە کارکرن!**\n\n• یاسا: کڕین و فڕۆتن ب دۆرێ د هەمان والێت دا (پارە کەم نابیت).\n• بڕ: $1.8 بۆ $3.5 ب شێوەیەکێ مرۆڤی.\n• دەمێ لڤینێ: ٢ بۆ ٥ خولەک.\n• راوەستاندن: /stop`);
 
   const runLoop = async () => {
     if (!isRunning24h) return;
@@ -245,49 +247,49 @@ bot.command('start_smart', async (ctx) => {
     tradeCount++;
     const currentLoop = tradeCount;
 
-    let randIdx;
-    do {
-      randIdx = Math.floor(Math.random() * wallets.length);
-    } while (wallets.length > 1 && randIdx === lastUsedWalletIdx);
-    lastUsedWalletIdx = randIdx;
+    // گەڕان ل سەر هەر ٤ والێتان ب نۆرە دا هەمی وەک ئێک کار بکەن
+    const activeWalletIdx = currentWalletIndex;
+    currentWalletIndex = (currentWalletIndex + 1) % wallets.length;
 
-    const activeWallet = wallets[randIdx];
+    const activeWallet = wallets[activeWalletIdx];
+    const status = walletStatus[activeWalletIdx];
     const shortAddr = `${activeWallet.publicKey.toBase58().slice(0, 4)}...${activeWallet.publicKey.toBase58().slice(-4)}`;
 
     try {
       const solBal = await safeGetBalance(activeWallet.publicKey);
       const tokenBal = await safeGetTokenBalance(activeWallet.publicKey, ca);
 
-      let doSell = false;
-      if (walletTradeStates[randIdx].lastAction === 'BUY' && tokenBal.uiAmount > 2) {
-        doSell = true;
-      } else if (walletTradeStates[randIdx].lastAction === 'SELL' && solBal > 0.02 * LAMPORTS_PER_SOL) {
-        doSell = false;
+      // بڕیارا تۆکمە: ئەگەر بڕێ کڕینێ کربیت ئێکسەر دفڕۆشیت، دا والێت ڤالا نەبیت
+      if (status.nextAction === 'SELL') {
+        if (tokenBal.uiAmount > 1) {
+          const sellAmount = status.lastSolAmount; // هەمان بڕێ کڕی ڤەدگەڕینیت
+          const res = await executeSell(activeWallet, ca, sellAmount);
+          status.nextAction = 'BUY'; // جاری داهاتی دکڕێت
+          ctx.reply(`🔴 [خۆلا #${currentLoop} | والێت ${activeWalletIdx + 1} (${shortAddr})]\nفڕۆتنا هاوسەنگکرنێ ئەنجامدا (+${res.solGained} SOL زڤڕییە هەمان والێت):\nhttps://solscan.io/tx/${res.txid}`);
+        } else {
+          status.nextAction = 'BUY';
+        }
       } else {
-        doSell = tokenBal.uiAmount > 2;
-      }
-
-      if (doSell) {
-        const targetSol = (Math.random() * (0.028 - 0.015) + 0.015).toFixed(5);
-        const res = await executeAcademicSell(activeWallet, ca, parseFloat(targetSol));
-        walletTradeStates[randIdx].lastAction = 'SELL';
-        ctx.reply(`🔴 [خولی #${currentLoop} | والێت ${randIdx + 1} (${shortAddr})]\nفرۆشتن ئەنجامدرا (+${res.solGained} SOL):\nhttps://solscan.io/tx/${res.txid}`);
-      } else {
-        const buySol = (Math.random() * (0.027 - 0.014) + 0.014).toFixed(5);
-        const txid = await executeAcademicBuy(activeWallet, ca, parseFloat(buySol));
-        walletTradeStates[randIdx].lastAction = 'BUY';
-        ctx.reply(`🟢 [خولی #${currentLoop} | والێت ${randIdx + 1} (${shortAddr})]\nکڕینی سەوزکردنی چارت ئەنجامدرا (~${buySol} SOL):\nhttps://solscan.io/tx/${txid}`);
+        if (solBal > 0.025 * LAMPORTS_PER_SOL) {
+          const buyAmount = parseFloat((Math.random() * (0.024 - 0.014) + 0.014).toFixed(5));
+          status.lastSolAmount = buyAmount;
+          const txid = await executeBuy(activeWallet, ca, buyAmount);
+          status.nextAction = 'SELL'; // جاری داهاتی ب زۆرەملێ دفڕۆشیت دا پارە نەچیت
+          ctx.reply(`🟢 [خۆلا #${currentLoop} | والێت ${activeWalletIdx + 1} (${shortAddr})]\nکڕینا کەسککرنا چارتێ ئەنجامدا (~${buyAmount} SOL ژ هەمان والێت):\nhttps://solscan.io/tx/${txid}`);
+        } else {
+          ctx.reply(`⚠️ والێت ${activeWalletIdx + 1} پێویستی ب کێمەک SOL هەیە دا دەستپێکەت.`);
+        }
       }
 
     } catch (err) {
       console.error(err);
-      ctx.reply(`⚠️ ئاگاداری لە خولی #${currentLoop}: ${err.message || 'هەڵە لە تۆڕ'}`);
+      ctx.reply(`⚠️ ئاگاداری ل خۆلا #${currentLoop}: ${err.message || 'هەڵە لە تۆڕ'}`);
     }
 
     if (isRunning24h) {
       const nextDelay = Math.floor(Math.random() * (300000 - 120000)) + 120000;
       const mins = (nextDelay / 60000).toFixed(1);
-      ctx.reply(`⏳ جووڵەی داهاتوو (#${currentLoop + 1}) دوای ${mins} خولەک ئەنجام دەدرێت.`);
+      ctx.reply(`⏳ جووڵەیا بهێت (#${currentLoop + 1}) پشتی ${mins} خولەکێن دی دێ هێتە ئەنجامدان.`);
       loopTimeoutId = setTimeout(runLoop, nextDelay);
     }
   };
@@ -300,11 +302,11 @@ bot.command('stop', (ctx) => {
     isRunning24h = false;
     if (loopTimeoutId) clearTimeout(loopTimeoutId);
     loopTimeoutId = null;
-    ctx.reply(`🛑 بۆت ڕاگیرا.\nکۆی گشتی: ${tradeCount}`);
+    ctx.reply(`🛑 بۆت هاتە راوەستاندن.\nکۆیا گشتی: ${tradeCount}`);
   } else {
-    ctx.reply('بۆت ناچالاکە.');
+    ctx.reply('بۆت یێ راوەستیایە.');
   }
 });
 
 bot.launch();
-console.log('Multi-RPC Academic Bot running...');
+console.log('Closed Loop Bot operational.');
