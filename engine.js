@@ -1,71 +1,54 @@
-import { VersionedTransaction } from '@solana/web3.js';
-import fetch from 'cross-fetch';
-
-const SOL_MINT = "So11111111111111111111111111111111111111112";
-
-export async function getBalances(connection, walletAddress, tokenMint) {
-    const solBalanceLamports = await connection.getBalance(walletAddress);
-    const solBalance = solBalanceLamports / 1e9;
-
-    let tokenBalance = 0;
-    try {
-        const tokenAccounts = await connection.getParsedTokenAccountsByOwner(walletAddress, {
-            mint: tokenMint
-        });
-        if (tokenAccounts.value.length > 0) {
-            tokenBalance = tokenAccounts.value[0].account.data.parsed.info.tokenAmount.uiAmount || 0;
-        }
-    } catch (e) {
-        tokenBalance = 0;
-    }
-
-    return {
-        sol: solBalance,
-        solValueUSD: solBalance * 150,
-        tokens: tokenBalance,
-        tokenValueUSD: 25
-    };
+'use strict';
+const LIMITS = Object.freeze({ initial: 100, reserve: 20, order: 5, dailyLoss: 5,
+  dailyBuys: 4, dailySpend: 20, cooldownMs: 3600000, stop: 0.05, profit: 0.10,
+  friction: 0.005, fee: 0.05 });
+function fresh() {
+  return { version: 2, accounts: Array.from({ length: 4 }, () => ({ cash: 100,
+    position: null, lastBuy: 0, day: '', dayStart: 100, buys: 0, spent: 0, halted: false })), events: [] };
 }
-
-export async function executeTrade({ connection, keypair, tokenMint, action, amountUSD }) {
-    try {
-        const inputMint = action === 'BUY' ? SOL_MINT : tokenMint.toBase58();
-        const outputMint = action === 'BUY' ? tokenMint.toBase58() : SOL_MINT;
-        
-        const amountLamports = Math.floor((amountUSD / 150) * 1e9); 
-        if (amountLamports <= 0) return;
-
-        const quoteUrl = `https://quote-api.jup.ag/v6/quote?inputMint=${inputMint}&outputMint=${outputMint}&amount=${amountLamports}&slippageBps=100`;
-        const quoteResponse = await (await fetch(quoteUrl)).json();
-
-        if (!quoteResponse || quoteResponse.error) {
-            throw new Error(quoteResponse?.error || "کێشە لە وەرگرتنی نرخ");
-        }
-
-        const swapRes = await (
-            await fetch('https://quote-api.jup.ag/v6/swap', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    quoteResponse,
-                    userPublicKey: keypair.publicKey.toBase58(),
-                    wrapAndUnwrapSol: true,
-                })
-            })
-        ).json();
-
-        const swapTransactionBuf = Buffer.from(swapRes.swapTransaction, 'base64');
-        const transaction = VersionedTransaction.deserialize(swapTransactionBuf);
-        transaction.sign([keypair]);
-
-        const txid = await connection.sendTransaction(transaction, {
-            skipPreflight: true,
-            maxRetries: 2
-        });
-
-        console.log(`مامەڵە ئەنجامدرا (${action}): https://solscan.io/tx/${txid}`);
-        return txid;
-    } catch (err) {
-        throw new Error(`شکستی مامەڵە: ${err.message}`);
-    }
+function equity(a, price) { return a.cash + (a.position ? a.position.units * price : 0); }
+function signal(prices) {
+  if (prices.length < 21) return 'WAIT';
+  const mean = a => a.reduce((x, y) => x + y, 0) / a.length;
+  const previous = prices.slice(0, -1), current = prices;
+  const oldDiff = mean(previous.slice(-5)) - mean(previous.slice(-20));
+  const diff = mean(current.slice(-5)) - mean(current.slice(-20));
+  if (oldDiff <= 0 && diff > 0) return 'BUY';
+  if (oldDiff >= 0 && diff < 0) return 'SELL';
+  return 'HOLD';
 }
+function step(a, { price, mint, side, now = Date.now() }) {
+  if (!(Number.isFinite(price) && price > 0)) throw Error('Invalid market price');
+  if (a.position && a.position.mint !== mint) throw Error('Open position belongs to another token');
+  const day = new Date(now).toISOString().slice(0, 10);
+  if (a.day !== day) {
+    a.day = day; a.dayStart = equity(a, price); a.buys = 0; a.spent = 0;
+    a.halted = false;
+  }
+  const loss = a.dayStart - equity(a, price);
+  if (loss >= LIMITS.dailyLoss) a.halted = true;
+  const p = a.position;
+  let reason = null;
+  if (p) {
+    if (a.halted) reason = 'daily-loss circuit';
+    else if (price <= p.entry * (1 - LIMITS.stop)) reason = 'stop threshold';
+    else if (price >= p.entry * (1 + LIMITS.profit)) reason = 'profit threshold';
+    else if (side === 'SELL') reason = 'moving-average crossover';
+    if (reason) {
+      const proceeds = Math.max(0, p.units * price * (1 - LIMITS.friction) - LIMITS.fee);
+      a.cash += proceeds; a.position = null;
+      return { side: 'SELL', reason, price, units: p.units, proceeds, pnl: proceeds - p.cost, now, mint };
+    }
+    return null;
+  }
+  if (side !== 'BUY' || a.halted || a.buys >= LIMITS.dailyBuys ||
+    a.spent + LIMITS.order > LIMITS.dailySpend ||
+    (a.lastBuy && now - a.lastBuy < LIMITS.cooldownMs) ||
+    a.cash - LIMITS.order - LIMITS.fee < LIMITS.reserve) return null;
+  const units = LIMITS.order / (price * (1 + LIMITS.friction));
+  const cost = LIMITS.order + LIMITS.fee;
+  a.position = { mint, units, entry: price, cost };
+  a.cash -= cost; a.lastBuy = now; a.buys++; a.spent += LIMITS.order;
+  return { side: 'BUY', reason: 'moving-average crossover', price, units, cost, now, mint };
+}
+module.exports = { LIMITS, fresh, equity, signal, step };
