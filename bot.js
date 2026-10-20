@@ -1,6 +1,6 @@
 const { Telegraf } = require('telegraf');
 const { Connection, Keypair, VersionedTransaction, LAMPORTS_PER_SOL, PublicKey } = require('@solana/web3.js');
-const bs58 = require('bs58');
+const bs58 = require('bs58').default || require('bs58');
 const axios = require('axios');
 const http = require('http');
 
