@@ -33,10 +33,9 @@ function switchRpc() {
   currentRpcIdx = (currentRpcIdx + 1) % RPC_ENDPOINTS.length;
 }
 
-// سێرڤەری ناوەکی بۆ مانەوەی خزمەتگوزاری بە چالاکی
 http.createServer((req, res) => {
   res.writeHead(200, { 'Content-Type': 'text/plain' });
-  res.write('50/50 Chart Maker Engine Running.');
+  res.write('Organic Market Flow Active.');
   res.end();
 }).listen(PORT, () => {
   console.log(`Daemon active on port ${PORT}`);
@@ -71,7 +70,6 @@ let loopTimeoutId = null;
 let tradeCount = 0;
 let currentWalletIndex = 0;
 
-// پشکنینی باڵانسی SOL
 async function safeGetBalance(pubkey) {
   for (let attempt = 0; attempt < RPC_ENDPOINTS.length; attempt++) {
     try {
@@ -85,7 +83,6 @@ async function safeGetBalance(pubkey) {
   return 0;
 }
 
-// پشکنینی باڵانسی تۆکنی SEVEN
 async function safeGetTokenBalance(walletPubkey, mintPubkeyStr) {
   for (let attempt = 0; attempt < RPC_ENDPOINTS.length; attempt++) {
     try {
@@ -107,7 +104,6 @@ async function safeGetTokenBalance(walletPubkey, mintPubkeyStr) {
   return { rawAmount: '0', uiAmount: 0 };
 }
 
-// کڕینی بڕێکی کەم (تەنها بۆ سەوزکردنی چارت)
 async function executeBuy(wallet, outputMint, solAmount) {
   const lamports = Math.floor(solAmount * LAMPORTS_PER_SOL);
   const quoteRes = await axios.get('https://api.jup.ag/swap/v1/quote', {
@@ -139,7 +135,6 @@ async function executeBuy(wallet, outputMint, solAmount) {
   });
 }
 
-// فرۆشتنی بەشێکی کەم لە SEVEN (تەنها بۆ سوورکردنی چارت و هێشتنەوەی SOL)
 async function executeSell(wallet, inputMint, tokenRawAmount) {
   const sellQuote = await axios.get('https://api.jup.ag/swap/v1/quote', {
     params: {
@@ -176,7 +171,7 @@ async function executeSell(wallet, inputMint, tokenRawAmount) {
 }
 
 bot.start((ctx) => {
-  let msg = `⚙️ **بۆتی هاوسەنگی چارت (نیوە بە نیوە)**\n\nوالێتە چالاکەکان: *${wallets.length}*\nتێبینی: هەر والێتێک کەمێک دەکڕێت و کەمێک دەفرۆشێت تا چارت نەوەستێت و باڵانس بە یەکسانی بمێنێتەوە.\n\n`;
+  let msg = `⚙️ **بۆتی دروستکردنی چارتی سروشتی و سەوز**\n\nوالێتەکان: *${wallets.length}*\n• سیستەم: ٧٠٪ کڕینی بەردەوام و ورد بۆ سەوز هێشتنەوەی چارت بەبێ دروستکردنی گومان.\n• باڵانس: پاراستنی هاوسەنگی نیوە بە نیوە بەبێ خاڵیبوونەوە.\n\n`;
   wallets.forEach((w, i) => {
     msg += `${i + 1}. \`${w.publicKey.toBase58()}\`\n`;
   });
@@ -186,7 +181,7 @@ bot.start((ctx) => {
 bot.command('balance', async (ctx) => {
   try {
     const ca = 'Ho3DNyGDTuKoFdA1bd6obE9xaL4RuStHUW1eLpodHS53';
-    let msg = `📊 **باڵانسی ئێستای ٤ والێتەکە:**\n\n`;
+    let msg = `📊 **باڵانسی ئێستای والێتەکان:**\n\n`;
     for (let i = 0; i < wallets.length; i++) {
       const bSol = await safeGetBalance(wallets[i].publicKey);
       const bToken = await safeGetTokenBalance(wallets[i].publicKey, ca);
@@ -194,7 +189,7 @@ bot.command('balance', async (ctx) => {
     }
     ctx.reply(msg, { parse_mode: 'Markdown' });
   } catch (error) {
-    ctx.reply(`هەڵە لە وەرگرتنی باڵانس: ${error.message}`);
+    ctx.reply(`هەڵە لە باڵانس: ${error.message}`);
   }
 });
 
@@ -209,7 +204,7 @@ bot.command('start_smart', async (ctx) => {
   isRunning24h = true;
   tradeCount = 0;
 
-  ctx.reply(`🚀 **سیستەمی جوڵاندنی چارت (هاوسەنگی ٥٠٪ بە ٥٠٪) دەستی پێکرد!**\n\n• تایبەتمەندی: نە SOL تەواو دەبێت نە SEVEN دەفرۆشرێت بە تەواوی.\n• بەردەوام کڕین و فرۆشتنی ورد ئەنجام دەدرێت بۆ جوڵاندنی چارت.\n• ماوەی نێوان ئۆردەرەکان: ١.٥ بۆ ٣.٥ خولەک.\n• ڕاگرتن: /stop`);
+  ctx.reply(`🚀 **سیستەمی چارتی سروشتی (زۆرینەی سەوز) دەستی پێکرد!**\n\n• تایبەتمەندی: زۆربەی ئۆردەرەکان کڕینن تا چارت بە سەوزی بمێنێتەوە.\n• فرۆشتن تەنها لە کاتی پێویست و بە ڕێژەیەکی کەم بۆ پاراستنی باڵانسی SOL ئەنجام دەدرێت.\n• ماوەی نێوان ئۆردەرەکان: ١ بۆ ٣ خولەک بە شێوەی هەڕەمەکی.\n• ڕاگرتن: /stop`);
 
   const runLoop = async () => {
     if (!isRunning24h) return;
@@ -217,7 +212,6 @@ bot.command('start_smart', async (ctx) => {
     tradeCount++;
     const currentLoop = tradeCount;
 
-    // دیاریکردنی والێت بەپێی نۆرە
     const activeWalletIdx = currentWalletIndex;
     currentWalletIndex = (currentWalletIndex + 1) % wallets.length;
 
@@ -228,32 +222,35 @@ bot.command('start_smart', async (ctx) => {
       const solBal = await safeGetBalance(activeWallet.publicKey);
       const tokenBal = await safeGetTokenBalance(activeWallet.publicKey, ca);
 
-      // بڕیار لەسەر کڕین یان فرۆشتن بە شێوەیەک باڵانس بە ٥٠/٥٠ بمێنێتەوە
+      // بەستنی بڕیار لەسەر ٧٠٪ کڕین و تەنها ٣٠٪ فرۆشتن لە کاتی پێویست
       let action = 'BUY';
-      if (tokenBal.uiAmount > 5 && Math.random() > 0.5) {
+      
+      // تەنها کاتێک دەفڕۆشێت ئەگەر SOL کەمی کردبێت (خوار 0.04 SOL) یان بە ئەگەری کەم (٢٥٪) بۆ ئەوەی چارتەکە فەیک دەرنەکەوێت
+      if ((solBal < 0.04 * LAMPORTS_PER_SOL && tokenBal.uiAmount > 5) || (Math.random() < 0.25 && tokenBal.uiAmount > 10)) {
         action = 'SELL';
       }
 
-      if (action === 'BUY' && solBal > 0.02 * LAMPORTS_PER_SOL) {
-        // بڕێکی کەم دەکڕێت (نزیکەی 1.5 بۆ 2.5 دۆلار) تەنها بۆ سەوزکردنی چارت
-        const buySol = parseFloat((Math.random() * (0.015 - 0.008) + 0.008).toFixed(4));
+      if (action === 'BUY' && solBal > 0.015 * LAMPORTS_PER_SOL) {
+        // بڕی کڕینی ورد و هەڕەمەکی بۆ ئەوەی وەکو کڕیاری ڕاستەقینە دەربکەوێت
+        const buySol = parseFloat((Math.random() * (0.018 - 0.007) + 0.007).toFixed(5));
         const txid = await executeBuy(activeWallet, ca, buySol);
         ctx.reply(`🟢 [خولی #${currentLoop} | والێت ${activeWalletIdx + 1} (${shortAddr})]\nکڕینی سەوزکردنی چارت ئەنجامدرا (~${buySol} SOL):\nhttps://solscan.io/tx/${txid}`);
       } else if (tokenBal.uiAmount > 2) {
-        // فرۆشتنی تەنها بەشێکی کەم (نزیکەی 10% بۆ 20% لە تۆکنەکانی ناو هەمان والێت) بۆ هاوسەنگکردن
-        const sellFraction = (Math.random() * (0.20 - 0.10) + 0.10);
+        // فرۆشتنی تەنها بڕێکی زۆر بچووک (٥٪ بۆ ١٢٪) لە تۆکنەکان تا باڵانسی چارت تێکنەچێت
+        const sellFraction = (Math.random() * (0.12 - 0.05) + 0.05);
         const sellRaw = Math.floor(Number(tokenBal.rawAmount) * sellFraction).toString();
         const res = await executeSell(activeWallet, ca, sellRaw);
-        ctx.reply(`🔴 [خولی #${currentLoop} | والێت ${activeWalletIdx + 1} (${shortAddr})]\nفرۆشتنی چارت ئەنجامدرا (+${res.solGained} SOL گەڕایەوە):\nhttps://solscan.io/tx/${res.txid}`);
+        ctx.reply(`🔴 [خولی #${currentLoop} | والێت ${activeWalletIdx + 1} (${shortAddr})]\nفرۆشتنی باڵانس ئەنجامدرا (+${res.solGained} SOL گەڕایەوە):\nhttps://solscan.io/tx/${res.txid}`);
       }
 
     } catch (err) {
       console.error(err);
-      ctx.reply(`⚠️ ئاگاداری لە خولی #${currentLoop}: ${err.message || 'هەڵەی پەیوەندی'}`);
+      ctx.reply(`⚠️ ئاگاداری لە خولی #${currentLoop}: ${err.message || 'هەڵە لە تۆڕ'}`);
     }
 
     if (isRunning24h) {
-      const nextDelay = Math.floor(Math.random() * (210000 - 90000)) + 90000;
+      // کاتی هەڕەمەکی لە نێوان ٧٥ بۆ ١٩٠ چرکە بۆ سروشتی دەرکەوتنی ترانزاکشنەکان
+      const nextDelay = Math.floor(Math.random() * (190000 - 75000)) + 75000;
       const mins = (nextDelay / 60000).toFixed(1);
       ctx.reply(`⏳ جووڵەی داهاتوو (#${currentLoop + 1}) دوای ${mins} خولەک ئەنجام دەدرێت.`);
       loopTimeoutId = setTimeout(runLoop, nextDelay);
@@ -275,4 +272,4 @@ bot.command('stop', (ctx) => {
 });
 
 bot.launch();
-console.log('50/50 Balance Bot operational.');
+console.log('Organic Bullish Chart Engine operational.');
